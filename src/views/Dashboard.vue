@@ -1,0 +1,2372 @@
+<template>
+  <div class="dashboard">
+    <!-- Atmospheric background mesh -->
+    <div class="atmo-mesh"></div>
+
+    <!-- Loading State -->
+    <div v-if="marketStore.loading && !judgment" class="loading-state">
+      <div class="pulse-loader">
+        <div class="pulse-ring"></div>
+        <div class="pulse-ring delay"></div>
+        <div class="pulse-core"></div>
+      </div>
+      <span class="loading-text">正在采集市场数据...</span>
+    </div>
+
+    <template v-else>
+      <!-- ===== INDEX CARDS ROW ===== -->
+      <section class="index-row">
+        <div v-for="(item, key) in indexCards" :key="key" class="index-card">
+          <div class="index-card__header">
+            <span class="index-card__name">{{ item.name }}</span>
+            <span class="index-card__price">{{ item.close ? item.close.toFixed(2) : '--' }}</span>
+            <span class="index-card__change" :class="item.isUp ? 'up' : 'down'">
+              {{ item.isUp ? '▲' : '▼' }} {{ formatChange(item.change) }}%
+            </span>
+          </div>
+          <div class="index-card__sparkline">
+            <Sparkline
+              v-if="item.trends.length"
+              :data="item.trends"
+              :positive="item.isUp"
+              :show-area="true"
+              :height="68"
+              :auto-width="true"
+              :ref-price="item.preClose"
+              :total-slots="240"
+            />
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== MAIN GRID: STATUS ORB + SIGNALS ===== -->
+      <section class="main-grid">
+        <!-- LEFT: Market Status Orb -->
+        <div class="status-orb-panel">
+          <div class="orb-container">
+            <div class="orb" :class="orbClass">
+              <div class="orb-glow"></div>
+              <div class="orb-inner">
+                <span class="orb-label">{{ judgment?.label || '--' }}</span>
+              </div>
+            </div>
+            <div class="orb-ring ring-1"></div>
+            <div class="orb-ring ring-2"></div>
+          </div>
+          <div class="orb-meta">
+            <div class="orb-meta__row">
+              <span class="orb-meta__key">建议仓位</span>
+              <span class="orb-meta__val" :class="positionClass">{{ judgment?.maxPosition || '--' }}</span>
+            </div>
+            <div class="orb-meta__row">
+              <span class="orb-meta__key">推荐策略</span>
+              <span class="orb-meta__val">{{ judgment?.strategyName || '--' }}</span>
+            </div>
+            <div class="orb-meta__row">
+              <span class="orb-meta__key">信号确认</span>
+              <span class="orb-meta__val">
+                <span :class="judgment?.confirmed ? 'confirmed' : 'unconfirmed'">
+                  {{ judgment?.confirmed ? '已确认' : '未确认' }}
+                </span>
+              </span>
+            </div>
+          </div>
+          <!-- Score bar -->
+          <div class="score-bar">
+            <div class="score-segment bull" :style="{ flex: judgment?.score?.bullW || 0 }">
+              {{ judgment?.score?.bull || 0 }}牛 <span class="score-wt">({{ judgment?.score?.bullW || 0 }})</span>
+            </div>
+            <div class="score-segment neutral" :style="{ flex: judgment?.score?.neutral || 0 }">
+              {{ judgment?.score?.neutral || 0 }} 中
+            </div>
+            <div class="score-segment bear" :style="{ flex: judgment?.score?.bearW || 0 }">
+              {{ judgment?.score?.bear || 0 }}熊 <span class="score-wt">({{ judgment?.score?.bearW || 0 }})</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: 6-Dimension Signal Table -->
+        <div class="signals-panel">
+          <h2 class="panel-title">九维判据
+            <button class="btn btn-sm btn-ghost refresh-btn" @click="refreshJudgment">刷新</button>
+          </h2>
+          <div class="signals-grid">
+            <div
+              v-for="(sig, i) in judgment?.signals || []"
+              :key="sig.dimension"
+              class="signal-card"
+              :class="{ 'signal-enter': showSignals }"
+              :style="{ animationDelay: `${i * 80}ms` }"
+            >
+              <div class="signal-card__indicator" :class="signalClass(sig)"></div>
+              <div class="signal-card__body">
+                <div class="signal-card__dim">
+                  <span class="dim-name">{{ sig.dimension }}</span>
+                  <span class="dim-result" :class="'result-' + (sig.bull ? 'bull' : sig.bear ? 'bear' : 'neutral')">{{ sig.value }}</span>
+                  <span v-if="sig.hint" class="dim-hint">{{ sig.hint }}</span>
+                  <span v-if="sig.divergence" class="div-badge" :class="sig.divergence">{{ sig.divergence === 'bullish' ? '底背离' : '顶背离' }}</span>
+                  <span v-if="sig.weight >= 1.5 && !sig.divergence" class="weight-badge">强</span>
+                </div>
+                <div class="signal-card__desc">{{ sig.desc }}</div>
+                <div v-if="sig.subSignals" class="signal-card__indices">
+                  <span v-for="sub in sig.subSignals" :key="sub.index" class="index-tag" :class="'tag-' + sub.dir">{{ sub.index }} {{ sub.signal }}</span>
+                </div>
+              </div>
+              <div class="signal-card__tag" :class="signalTagClass(sig)">
+                {{ sig.bull ? '牛' : sig.bear ? '熊' : '中' }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== LONG WINDOW QUICK CHECK ===== -->
+      <section class="long-window-section" v-if="judgment?.longWindow">
+        <h2 class="panel-title">
+          <span class="title-icon">⚡</span>
+          做多窗口速判
+          <span class="lw-badge" :class="judgment.longWindow.allPass ? 'pass' : 'fail'">
+            {{ judgment.longWindow.allPass ? '窗口已开启' : '窗口未开启' }}
+          </span>
+        </h2>
+        <div class="lw-conditions">
+          <div
+            v-for="(cond, i) in judgment.longWindow.conditions"
+            :key="i"
+            class="lw-cond"
+            :class="{ pass: cond.pass }"
+          >
+            <div class="lw-cond__icon">{{ cond.pass ? '✓' : '✗' }}</div>
+            <span>{{ cond.label }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== SECTOR FLOW + RS ROTATION ===== -->
+      <section class="sector-flow-section" v-if="analysisStore.sectors.length">
+        <h2 class="panel-title collapsible-header" @click="sectorExpanded = !sectorExpanded">
+          <span class="title-icon">▦</span>
+          行业资金流向 & RS轮动
+          <template v-if="analysisStore.rsAvailable && analysisStore.top5Strong.length">
+            <span class="rs-badge" :class="rotationSignalClass">{{ rotationSignalLabel }}</span>
+            <span class="rs-hint">超额收益 vs 上证指数</span>
+            <span class="rs-days">{{ analysisStore.rsDays }}日</span>
+          </template>
+          <span class="collapse-arrow" :class="{ expanded: sectorExpanded }">▸</span>
+        </h2>
+        <div class="collapsible-body" :class="{ collapsed: !sectorExpanded }">
+
+        <!-- Row 1: 涨幅TOP10 + 主力净流入TOP5 -->
+        <div class="sector-flow-grid">
+          <div class="sector-flow-group">
+            <h3 class="rs-group-title" style="color:var(--red)">涨幅 TOP5</h3>
+            <div class="sector-flow-row sector-flow-header">
+              <span class="sf-name">行业</span>
+              <span class="sf-change">涨幅</span>
+              <span class="sf-flow">主力净流入</span>
+              <span class="sf-lead">领涨股</span>
+            </div>
+            <div v-for="s in sectorTop10" :key="s.code" class="sector-flow-row">
+              <span class="sf-name">{{ s.name }}</span>
+              <span class="sf-change" :class="s.changePercent >= 0 ? 'up' : 'down'">
+                {{ s.changePercent >= 0 ? '+' : '' }}{{ s.changePercent?.toFixed(2) }}%
+              </span>
+              <span class="sf-flow" :class="s.mainFlow >= 0 ? 'up' : 'down'">
+                {{ fmtMainFlow(s.mainFlow) }}
+              </span>
+              <span class="sf-lead">{{ s.leadStock || '--' }}</span>
+            </div>
+          </div>
+          <div class="sector-flow-group" v-if="analysisStore.top5Flow.length">
+            <h3 class="rs-group-title" style="color:#f0b90b">主力净流入 TOP5</h3>
+            <div class="sector-flow-row sector-flow-header">
+              <span class="sf-name">行业</span>
+              <span class="sf-flow">净流入</span>
+              <span class="sf-change">涨幅</span>
+            </div>
+            <div v-for="s in analysisStore.top5Flow" :key="'f-'+s.code" class="sector-flow-row">
+              <span class="sf-name">{{ s.name }}</span>
+              <span class="sf-flow up">{{ fmtMainFlow(s.mainFlow) }}</span>
+              <span class="sf-change" :class="s.changePercent >= 0 ? 'up' : 'down'">
+                {{ s.changePercent >= 0 ? '+' : '' }}{{ s.changePercent?.toFixed(2) }}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: RS轮动 (only when history >= 5 days) -->
+        <div class="rs-grid" v-if="analysisStore.rsAvailable && analysisStore.top5Strong.length" style="margin-top:20px">
+          <div class="rs-group">
+            <h3 class="rs-group-title" style="color:var(--red)">RS强势 TOP5</h3>
+            <div class="rs-header-row">
+              <span class="rs-name">板块</span>
+              <span class="rs-excess">5日超额</span>
+              <span class="rs-ratio">RS</span>
+              <span class="rs-trend-h">趋势</span>
+              <span class="rs-change-h">今日</span>
+            </div>
+            <div v-for="s in analysisStore.top5Strong" :key="s.code" class="rs-row">
+              <span class="rs-name" :title="s.name">{{ s.name }}</span>
+              <span class="rs-excess" :class="s.excess5d > 0 ? 'up' : s.excess5d < 0 ? 'down' : ''">
+                {{ s.excess5d != null ? (s.excess5d > 0 ? '+' : '') + s.excess5d.toFixed(1) + '%' : '--' }}
+              </span>
+              <span class="rs-ratio" :class="s.rsRatio != null && s.rsRatio > 0 ? 'up' : s.rsRatio != null && s.rsRatio < 0 ? 'down' : ''">
+                {{ s.rsRatio != null ? (s.rsRatio > 0 ? '+' : '') + s.rsRatio.toFixed(1) + 'x' : '--' }}
+              </span>
+              <span class="rs-trend" :class="s.rsTrend === 'accelerating' ? 'c-red' : s.rsTrend === 'decelerating' ? 'c-green' : 'c-muted'">
+                {{ s.rsTrend === 'accelerating' ? '▲' : s.rsTrend === 'decelerating' ? '▼' : '▶' }}
+              </span>
+              <span class="rs-change" :class="s.changePercent >= 0 ? 'up' : 'down'">
+                {{ s.changePercent >= 0 ? '+' : '' }}{{ s.changePercent?.toFixed(2) }}%
+              </span>
+            </div>
+          </div>
+          <div class="rs-group">
+            <h3 class="rs-group-title" style="color:var(--green)">RS弱势 TOP5</h3>
+            <div class="rs-header-row">
+              <span class="rs-name">板块</span>
+              <span class="rs-excess">5日超额</span>
+              <span class="rs-ratio">RS</span>
+              <span class="rs-trend-h">趋势</span>
+              <span class="rs-change-h">今日</span>
+            </div>
+            <div v-for="s in analysisStore.top5Weak" :key="s.code" class="rs-row">
+              <span class="rs-name" :title="s.name">{{ s.name }}</span>
+              <span class="rs-excess" :class="s.excess5d > 0 ? 'up' : s.excess5d < 0 ? 'down' : ''">
+                {{ s.excess5d != null ? (s.excess5d > 0 ? '+' : '') + s.excess5d.toFixed(1) + '%' : '--' }}
+              </span>
+              <span class="rs-ratio" :class="s.rsRatio != null && s.rsRatio > 0 ? 'up' : s.rsRatio != null && s.rsRatio < 0 ? 'down' : ''">
+                {{ s.rsRatio != null ? (s.rsRatio > 0 ? '+' : '') + s.rsRatio.toFixed(1) + 'x' : '--' }}
+              </span>
+              <span class="rs-trend" :class="s.rsTrend === 'accelerating' ? 'c-red' : s.rsTrend === 'decelerating' ? 'c-green' : 'c-muted'">
+                {{ s.rsTrend === 'accelerating' ? '▲' : s.rsTrend === 'decelerating' ? '▼' : '▶' }}
+              </span>
+              <span class="rs-change" :class="s.changePercent >= 0 ? 'up' : 'down'">
+                {{ s.changePercent >= 0 ? '+' : '' }}{{ s.changePercent?.toFixed(2) }}%
+              </span>
+            </div>
+          </div>
+        </div>
+        </div>
+      </section>
+      <section class="macro-section" v-if="analysisStore.macro">
+        <h2 class="panel-title collapsible-header" @click="macroExpanded = !macroExpanded">
+          <span class="title-icon">◆</span>
+          宏观因子
+          <span class="macro-score-badge" :class="macroScoreClass">
+            {{ analysisStore.macro.macroScore > 0 ? '+' : '' }}{{ analysisStore.macro.macroScore }}分
+          </span>
+          <span class="collapse-arrow" :class="{ expanded: macroExpanded }">▸</span>
+        </h2>
+        <div class="collapsible-body" :class="{ collapsed: !macroExpanded }">
+        <div class="macro-grid">
+          <div class="macro-card" v-if="analysisStore.macro.pmi">
+            <div class="macro-card__header">
+              <span class="macro-card__label">PMI</span>
+              <span class="macro-card__date">{{ analysisStore.macro.pmi.date }}</span>
+            </div>
+            <div class="macro-card__value">
+              <span class="macro-card__num" :class="analysisStore.macro.pmi.makeIndex >= 50 ? 'up' : 'down'">
+                {{ analysisStore.macro.pmi.makeIndex }}
+              </span>
+              <span class="macro-card__unit">制造业</span>
+            </div>
+            <div class="macro-card__sub">
+              非制造 {{ analysisStore.macro.pmi.nmakeIndex }}
+              <span :class="analysisStore.macro.pmi.nmakeIndex >= 50 ? 'up' : 'down'">
+                {{ analysisStore.macro.pmi.nmakeIndex >= 50 ? '扩张' : '收缩' }}
+              </span>
+            </div>
+          </div>
+
+          <div class="macro-card" v-if="analysisStore.macro.m2">
+            <div class="macro-card__header">
+              <span class="macro-card__label">M2/M1</span>
+              <span class="macro-card__date">{{ analysisStore.macro.m2.date }}</span>
+            </div>
+            <div class="macro-card__value">
+              <span class="macro-card__num">M2 {{ analysisStore.macro.m2.m2Same }}%</span>
+            </div>
+            <div class="macro-card__sub">
+              M1 {{ analysisStore.macro.m2.m1Same }}%
+              <span :class="analysisStore.macro.m2.m1m2Scissors > analysisStore.macro.m2.prevScissors ? 'up' : 'down'">
+                剪刀差{{ analysisStore.macro.m2.m1m2Scissors }}%
+              </span>
+            </div>
+          </div>
+
+          <div class="macro-card" v-if="analysisStore.macro.cpi">
+            <div class="macro-card__header">
+              <span class="macro-card__label">CPI</span>
+              <span class="macro-card__date">{{ analysisStore.macro.cpi.date }}</span>
+            </div>
+            <div class="macro-card__value">
+              <span class="macro-card__num">{{ analysisStore.macro.cpi.current }}%</span>
+              <span class="macro-card__unit">同比</span>
+            </div>
+            <div class="macro-card__sub">
+              环比 {{ analysisStore.macro.cpi.sequential > 0 ? '+' : '' }}{{ analysisStore.macro.cpi.sequential }}%
+              · 累计 {{ analysisStore.macro.cpi.accumulate }}
+            </div>
+          </div>
+
+          <div class="macro-card" v-if="analysisStore.macro.gdp">
+            <div class="macro-card__header">
+              <span class="macro-card__label">GDP</span>
+              <span class="macro-card__date">{{ analysisStore.macro.gdp.date }}</span>
+            </div>
+            <div class="macro-card__value">
+              <span class="macro-card__num">{{ analysisStore.macro.gdp.gdpSame }}%</span>
+              <span class="macro-card__unit">同比</span>
+            </div>
+            <div class="macro-card__sub" v-if="analysisStore.macro.gdp.prevGdpSame != null">
+              上期 {{ analysisStore.macro.gdp.prevGdpSame }}%
+            </div>
+          </div>
+
+          <div class="macro-card" v-if="analysisStore.macro.sf">
+            <div class="macro-card__header">
+              <span class="macro-card__label">社融</span>
+              <span class="macro-card__date">{{ analysisStore.macro.sf.date }}</span>
+            </div>
+            <div class="macro-card__value">
+              <span class="macro-card__num" :class="analysisStore.macro.sf.increment > 0 ? 'up' : 'down'">
+                {{ analysisStore.macro.sf.increment }}亿
+              </span>
+              <span class="macro-card__unit">新增</span>
+            </div>
+            <div class="macro-card__sub">
+              同比增速 {{ analysisStore.macro.sf.stockYoyGrowth }}%
+              <span v-if="analysisStore.macro.sf.yoyChange != null" :class="analysisStore.macro.sf.yoyChange > 0 ? 'up' : 'down'">
+                · YoY {{ analysisStore.macro.sf.yoyChange > 0 ? '+' : '' }}{{ analysisStore.macro.sf.yoyChange }}亿
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="macro-details" v-if="analysisStore.macro.macroDetails?.length">
+          <div v-for="d in analysisStore.macro.macroDetails" :key="d.factor" class="macro-detail-row">
+            <span class="macro-detail__factor">{{ d.factor }}</span>
+            <span class="macro-detail__signal" :class="d.signal">{{ { positive: '利好', negative: '利空', neutral: '中性' }[d.signal] }}</span>
+            <span class="macro-detail__desc">{{ d.desc }}</span>
+          </div>
+        </div>
+        </div>
+      </section>
+      <section class="strategy-section" v-if="judgment">
+        <h2 class="panel-title">
+          <span class="title-icon">◈</span>
+          策略选股建议
+          <span v-if="activeStrategy" class="strategy-badge" :class="activeStrategy">{{ strategyLabel }}</span>
+          <span v-if="showStrategyToggle" class="strategy-toggle" @click="toggleStrategy" title="切换策略">
+            {{ neutralTech === 'pullback' ? '回调买入' : '底部确认' }} ⇄
+          </span>
+          <span v-if="activeStrategy" class="mode-switch" @click="toggleScreenerMode">
+            <span class="mode-switch__track" :class="screenerMode">
+              <span class="mode-switch__thumb"></span>
+            </span>
+            <span class="mode-switch__label">{{ screenerMode === 'strict' ? '严' : '宽' }}</span>
+          </span>
+        </h2>
+
+        <!-- Bear: no buy -->
+        <div v-if="!activeStrategy" class="strategy-empty">
+          <span class="strategy-empty__icon">⊘</span>
+          <span>当前市场{{ judgment.label }}，建议空仓观望，不推荐开新仓</span>
+        </div>
+
+        <template v-else>
+          <!-- Filter description -->
+          <div class="prompt-block">
+            <div class="prompt-header">
+              <span class="prompt-label">AI 智能选股条件</span>
+              <div class="prompt-actions">
+                <button class="btn btn-sm btn-ghost" @click="copyText(keyWordNewQuery)">复制</button>
+              </div>
+            </div>
+            <pre class="prompt-code">{{ keyWordNewQuery }}</pre>
+          </div>
+
+          <!-- Parsed conditions -->
+          <div class="conditions-block" v-if="parsedConditions.length">
+            <div class="conditions-tags">
+              <span v-for="c in parsedConditions" :key="c.conditionId" class="condition-tag" :class="{ invalid: !c.isValid }">
+                {{ c.describe }}
+              </span>
+            </div>
+          </div>
+          <p v-if="!aiCookieReady" class="cookie-hint">
+            未配置东财登录态，AI 选股仅解析部分条件。在 server/.env 中填入 EASTMONEY_EMAUTH 可解锁完整解析。
+          </p>
+
+          <!-- Stock cards -->
+          <div v-if="screenLoading" class="screen-loading">
+            <span class="pulse-dot"></span> 正在获取候选股...
+          </div>
+          <template v-else-if="screenStocks.length">
+            <div class="screen-summary">
+              <span class="prompt-hint">匹配 {{ screenStocks.length }} 只 · AI 智能选股结果</span>
+              <span v-if="activeStrategy" class="screen-strategy-guide">
+                <template v-if="activeStrategy === 'trend'">🚀 操作要点：突破前高放量确认时入场，点击卡片查看具体执行计划</template>
+                <template v-else-if="activeStrategy === 'pullback'">📉 操作要点：等回调至均线支撑企稳后入场，点击卡片查看执行计划</template>
+                <template v-else-if="activeStrategy === 'bottom'">🔍 操作要点：确认底部放量反转后入场，点击卡片查看执行计划</template>
+              </span>
+            </div>
+            <div class="stock-grid">
+              <div
+                v-for="s in screenStocks"
+                :key="s.code"
+                class="stock-card"
+                @click="goToStock(s.code, s.name)"
+              >
+                <div class="stock-card__header">
+                  <span class="stock-card__name">{{ s.name }}</span>
+                  <span class="stock-card__industry">{{ s.industry || fmtCap(s.marketCap) }}</span>
+                </div>
+                <div class="stock-card__price">
+                  <span class="stock-card__val">{{ s.price?.toFixed(2) }}</span>
+                  <span class="stock-card__chg" :class="s.change >= 0 ? 'up' : 'down'">
+                    {{ s.change >= 0 ? '+' : '' }}{{ s.change?.toFixed(2) }}%
+                  </span>
+                </div>
+                <div class="stock-card__meta">
+                  <span>PE {{ s.pe?.toFixed(1) }}</span>
+                  <span>PB {{ s.pb?.toFixed(2) }}</span>
+                  <span>换手 {{ s.turnover?.toFixed(1) }}%</span>
+                </div>
+                <div class="stock-card__flow" v-if="s.mainFlow != null">
+                  <span class="flow-label">主力</span>
+                  <span :class="s.mainFlow >= 0 ? 'up' : 'down'">
+                    {{ fmtFlow(s.mainFlow) }}
+                  </span>
+                </div>
+                <div class="stock-card__flow" v-else>
+                  <span class="flow-label">成交</span>
+                  <span>{{ fmtCap(s.volume) || '--' }}</span>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-sm btn-ghost screen-refresh" @click="fetchScreenStocks">刷新候选</button>
+          </template>
+          <div v-else class="screen-empty">
+            <span v-if="screenError" class="screen-error">{{ screenError }}</span>
+            <span v-else class="screen-empty__text">暂无匹配结果</span>
+            <button class="btn btn-sm btn-ghost screen-refresh" @click="fetchScreenStocks">重新检测</button>
+          </div>
+        </template>
+      </section>
+
+      <!-- ===== PRE-TRADE CHECKLIST ===== -->
+      <section class="checklist-section">
+        <h2 class="panel-title">
+          <span class="title-icon">☐</span>
+          交易前检查清单
+          <span class="checklist-progress">{{ checkedCount }}/{{ checklist.length }}</span>
+        </h2>
+        <div class="checklist-grid">
+          <label
+            v-for="(item, i) in checklist"
+            :key="i"
+            class="checklist-item"
+            :class="{ checked: item.checked, 'check-enter': showChecklist }"
+            :style="{ animationDelay: `${i * 50}ms` }"
+          >
+            <input type="checkbox" v-model="item.checked" />
+            <span class="check-box">
+              <span class="check-mark" v-if="item.checked">✓</span>
+            </span>
+            <span class="check-text">{{ item.label }}</span>
+          </label>
+        </div>
+      </section>
+    </template>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, reactive, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
+import { useMarketStore } from '../stores/market.js'
+import { useMarketAnalysisStore } from '../stores/marketAnalysis.js'
+import { judgeMarket } from '../utils/marketJudge.js'
+import { PRE_TRADE_CHECKLIST, REFRESH_INTERVAL } from '../utils/constants.js'
+import { getStrategyPreset, buildStructuredFilter, buildFilterDescription, buildKeyWordNew, buildMarketStateQuery } from '../utils/screenerPrompt.js'
+import { saveJson } from '../utils/storage.js'
+import { useWatchlistStore } from '../stores/watchlist.js'
+import Sparkline from '../components/Sparkline.vue'
+
+const router = useRouter()
+const marketStore = useMarketStore()
+const analysisStore = useMarketAnalysisStore()
+const watchlistStore = useWatchlistStore()
+const showSignals = ref(false)
+const showChecklist = ref(false)
+const sectorExpanded = ref(false)
+const macroExpanded = ref(false)
+
+const checklist = reactive(PRE_TRADE_CHECKLIST.map(label => ({ label, checked: false })))
+
+const checkedCount = computed(() => checklist.filter(c => c.checked).length)
+
+const judgment = computed(() => {
+  if (!marketStore.dataReady) return null
+  if (!marketStore.indices || !marketStore.breadth || !marketStore.northbound) return null
+  const d = new Date()
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return judgeMarket(marketStore.indices, marketStore.breadth, marketStore.northbound, marketStore.margin, marketStore.breadthHistory, marketStore.limitStats, marketStore.prevStatus, analysisStore.macro?.macroScore, today)
+})
+
+// 状态惯性：判定完成后持久化状态（含增强迟滞参数），下次判定作为惯性参考
+// 仅监听 status 变化（不含 crossCount），避免 crossCount 递增导致的无限递归：
+// judgment 依赖 prevStatus → watch 写回 prevStatus → 触发 judgment 重算 → crossCount 再递增 → 循环
+watch(() => judgment.value?.status, (newStatus) => {
+  if (!newStatus) return
+  const state = judgment.value.hysteresisState
+  const d = new Date()
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const prevS = typeof marketStore.prevStatus === 'object' ? marketStore.prevStatus?.status : marketStore.prevStatus
+
+  // status 变化时持久化（含紧急翻转、确认翻转等）
+  if (newStatus !== prevS) {
+    const toSave = {
+      status: state?.status || newStatus,
+      date: today,
+      crossCount: state?.crossCount || 0,
+      lastFlipDate: state?.lastFlipDate || null
+    }
+    marketStore.prevStatus = toSave
+    saveJson('market_prev_status', toSave)
+  }
+})
+
+// ==================== Strategy Stock Screening ====================
+const screenLoading = ref(false)
+const screenStocks = ref([])
+const screenError = ref('')
+const screenerMode = ref('loose')
+const neutralTech = ref('pullback') // 'pullback' | 'bottomConfirm'
+
+const activeStrategy = computed(() => {
+  const s = judgment.value?.status
+  if (s === 'bull') return 'trend'
+  if (s === 'bull-lean') return 'pullback'
+  if (s === 'neutral') return neutralTech.value === 'bottomConfirm' ? 'bottom' : 'pullback'
+  return null
+})
+
+const showStrategyToggle = computed(() => judgment.value?.status === 'neutral')
+
+const strategyLabel = computed(() => {
+  if (activeStrategy.value === 'trend') return '趋势突破'
+  if (activeStrategy.value === 'bottom') return '底部确认'
+  return '回调买入'
+})
+
+const structuredFilter = computed(() => {
+  const s = judgment.value?.status
+  if (!s || !activeStrategy.value) return ''
+  const techOverride = s === 'neutral' && neutralTech.value === 'bottomConfirm' ? 'bottomConfirm' : null
+  const preset = getStrategyPreset(s, screenerMode.value, techOverride)
+  return buildStructuredFilter(preset)
+})
+
+const keyWordNewQuery = computed(() => {
+  const s = judgment.value?.status
+  if (!s || !activeStrategy.value) return ''
+  const techOverride = s === 'neutral' && neutralTech.value === 'bottomConfirm' ? 'bottomConfirm' : null
+  return buildMarketStateQuery(s, screenerMode.value, techOverride)
+})
+
+const parsedConditions = ref([])
+const aiCookieReady = ref(false)
+
+async function checkAICookie() {
+  try {
+    const r = await fetch('/api/stock/xuangu/ai/status')
+    const d = await r.json()
+    aiCookieReady.value = d?.data?.hasCookie === true
+  } catch { /* ignore */ }
+}
+checkAICookie()
+
+const filterDesc = computed(() => {
+  const s = judgment.value?.status
+  if (!s || !activeStrategy.value) return ''
+  const techOverride = s === 'neutral' && neutralTech.value === 'bottomConfirm' ? 'bottomConfirm' : null
+  const preset = getStrategyPreset(s, screenerMode.value, techOverride)
+  return buildFilterDescription(preset)
+})
+
+async function fetchScreenStocks() {
+  if (!activeStrategy.value) return
+  screenLoading.value = true
+  screenError.value = ''
+  try {
+    const keyWordNew = keyWordNewQuery.value
+    if (!keyWordNew) { screenStocks.value = []; return }
+
+    // 优先使用 AI 选股 API
+    const aiRes = await fetch('/api/stock/xuangu/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyWordNew, pageSize: 40 }),
+    })
+    const aiJson = await aiRes.json()
+
+    if (aiJson.ok && aiJson.data?.stocks?.length >= 0) {
+      // AI API 返回成功，但如果解析条件过少（total 过大），说明解析不完整
+      const aiTotal = aiJson.data.total || 0
+      const aiConditions = aiJson.data.conditions || []
+      if (aiTotal <= 200 || aiConditions.length >= 3) {
+        screenStocks.value = aiJson.data.stocks
+        parsedConditions.value = aiConditions
+        return
+      }
+    }
+
+    // AI API 失败，回退到结构化 API
+    const filter = structuredFilter.value
+    const s = judgment.value?.status
+    const techOverride = s === 'neutral' && neutralTech.value === 'bottomConfirm' ? 'bottomConfirm' : null
+    const preset = getStrategyPreset(s, screenerMode.value, techOverride)
+    const minesParam = preset.mines.filter(m => m.checked).map(m => m.id).join(',')
+    const res = await fetch(`/api/stock/xuangu/structured?filter=${encodeURIComponent(filter)}&ps=40&mines=${minesParam}`)
+    const json = await res.json()
+    if (json.ok) {
+      screenStocks.value = json.data.stocks
+      parsedConditions.value = []
+    } else {
+      screenStocks.value = []
+      screenError.value = json.error || '选股服务返回异常'
+    }
+  } catch (e) {
+    console.error('fetchScreenStocks error:', e)
+    screenStocks.value = []
+    screenError.value = '选股服务请求失败，请稍后重试'
+  } finally {
+    screenLoading.value = false
+  }
+}
+
+function toggleScreenerMode() {
+  screenerMode.value = screenerMode.value === 'strict' ? 'loose' : 'strict'
+  nextTick(() => fetchScreenStocks())
+}
+
+function toggleStrategy() {
+  neutralTech.value = neutralTech.value === 'pullback' ? 'bottomConfirm' : 'pullback'
+  nextTick(() => fetchScreenStocks())
+}
+
+watch(activeStrategy, (v) => {
+  if (v) fetchScreenStocks()
+})
+
+function fmtFlow(v) {
+  if (v == null) return '--'
+  const abs = Math.abs(v)
+  const str = abs >= 10000 ? (abs / 10000).toFixed(1) + '亿' : abs.toFixed(0) + '万'
+  return (v >= 0 ? '+' : '-') + str
+}
+
+function fmtCap(v) {
+  if (!v) return ''
+  if (v >= 1e8) return (v / 1e8).toFixed(0) + '亿'
+  if (v >= 1e4) return (v / 1e4).toFixed(0) + '万'
+  return v.toFixed(0)
+}
+
+function goToStock(code, name) {
+  watchlistStore.addStock(code, name)
+  router.push({
+    path: '/stock-analysis',
+    query: {
+      code,
+      name,
+      strategy: activeStrategy.value || undefined,
+      marketStatus: judgment.value?.status || undefined,
+    }
+  })
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text)
+}
+
+const indexIntraday = ref({ sh: null, sz: null, cyb: null })
+
+const indexCards = computed(() => {
+  const data = marketStore.indices || {}
+  const names = { sh: '上证指数', sz: '深证成指', cyb: '创业板指' }
+  const codes = { sh: '000001', sz: '399001', cyb: '399006' }
+  const cards = {}
+  for (const key of ['sh', 'sz', 'cyb']) {
+    const d = data[key] || {}
+    const q = d.quote || {}
+    const intra = indexIntraday.value[key]
+    // 优先使用分时图最新点作为实时价格（10秒刷新），回退到 quote（1分钟刷新）
+    const lastTrend = intra?.trends?.length ? intra.trends[intra.trends.length - 1] : null
+    const preClose = intra?.preClose || q.preClose || 0
+    const close = lastTrend ? lastTrend.close : q.close
+    const change = lastTrend && preClose > 0
+      ? (close - preClose) / preClose * 100
+      : (q.change ?? 0)
+    cards[key] = {
+      name: names[key],
+      code: codes[key],
+      close,
+      change,
+      isUp: change >= 0,
+      trends: intra?.trends || [],
+      preClose
+    }
+  }
+  return cards
+})
+
+const orbClass = computed(() => {
+  const s = judgment.value?.status
+  if (s === 'bull' || s === 'bull-lean') return 'orb-bull'
+  if (s === 'bear' || s === 'bear-lean') return 'orb-bear'
+  return 'orb-neutral'
+})
+
+const positionClass = computed(() => {
+  const s = judgment.value?.status
+  if (s === 'bull' || s === 'bull-lean') return 'pos-bull'
+  if (s === 'bear' || s === 'bear-lean') return 'pos-bear'
+  return ''
+})
+
+function signalClass(sig) {
+  if (sig.bull) return 'sig-bull'
+  if (sig.bear) return 'sig-bear'
+  return 'sig-neutral'
+}
+
+function signalTagClass(sig) {
+  if (sig.bull) return 'tag-bull'
+  if (sig.bear) return 'tag-bear'
+  return 'tag-neutral'
+}
+
+// ===== Sector RS Rotation =====
+const rotationSignalLabel = computed(() => {
+  const map = { strengthening: '板块走强', weakening: '板块走弱', mixed: '板块分化' }
+  return map[analysisStore.rotationSignal] || '数据积累中'
+})
+
+const rotationSignalClass = computed(() => {
+  const map = { strengthening: 'rs-strengthening', weakening: 'rs-weakening', mixed: 'rs-mixed' }
+  return map[analysisStore.rotationSignal] || ''
+})
+
+// ===== Macro Factors =====
+const macroScoreClass = computed(() => {
+  const s = analysisStore.macro?.macroScore
+  if (s == null) return ''
+  if (s > 0) return 'macro-positive'
+  if (s < 0) return 'macro-negative'
+  return 'macro-neutral'
+})
+
+// ===== Sector Capital Flow =====
+const sectorTop10 = computed(() => {
+  return analysisStore.sectors
+    .slice()
+    .sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0))
+    .slice(0, 5)
+})
+
+function fmtMainFlow(val) {
+  if (val == null) return '--'
+  const yi = val / 1e8
+  if (Math.abs(yi) >= 1) return (yi >= 0 ? '+' : '') + yi.toFixed(1) + '亿'
+  const wan = val / 1e4
+  return (wan >= 0 ? '+' : '') + wan.toFixed(0) + '万'
+}
+
+function formatChange(val) {
+  if (val == null) return '--'
+  return (val >= 0 ? '+' : '') + val.toFixed(2)
+}
+
+let intradayTimer = null
+let judgmentTimer = null
+let breadthTimer = null
+const JUDGMENT_INTERVAL = 1 * 60 * 1000 // 1 分钟
+const BREADTH_INTERVAL = 30 * 1000      // 30 秒
+
+function startIntradayTimer() {
+  if (intradayTimer) return
+  fetchIndexIntraday()
+  intradayTimer = setInterval(fetchIndexIntraday, REFRESH_INTERVAL)
+}
+
+function startJudgmentTimer() {
+  if (judgmentTimer) return
+  marketStore.fetchAll()
+  judgmentTimer = setInterval(() => marketStore.fetchAll(), JUDGMENT_INTERVAL)
+}
+
+function startBreadthTimer() {
+  if (breadthTimer) return
+  marketStore.fetchBreadth()
+  breadthTimer = setInterval(() => marketStore.fetchBreadth(), BREADTH_INTERVAL)
+}
+
+function refreshJudgment() {
+  marketStore.fetchAll()
+}
+
+function stopIntradayTimer() {
+  if (intradayTimer) { clearInterval(intradayTimer); intradayTimer = null }
+}
+
+function stopJudgmentTimer() {
+  if (judgmentTimer) { clearInterval(judgmentTimer); judgmentTimer = null }
+}
+
+function stopBreadthTimer() {
+  if (breadthTimer) { clearInterval(breadthTimer); breadthTimer = null }
+}
+
+function onVisibilityChange() {
+  if (document.hidden) {
+    stopIntradayTimer()
+    stopJudgmentTimer()
+    stopBreadthTimer()
+  } else {
+    startIntradayTimer()
+    startJudgmentTimer()
+    startBreadthTimer()
+  }
+}
+
+async function fetchIndexIntraday() {
+  try {
+    const res = await fetch('/api/market/indices/intraday')
+    const json = await res.json()
+    if (json.ok) {
+      for (const key of ['sh', 'sz', 'cyb']) {
+        if (json.data[key]?.trends?.length) indexIntraday.value[key] = json.data[key]
+      }
+    }
+  } catch (e) { console.error('fetchIndexIntraday error:', e) }
+}
+
+onMounted(async () => {
+  startIntradayTimer()
+  startJudgmentTimer()
+  startBreadthTimer()
+  analysisStore.fetchSectors()
+  analysisStore.fetchMacro()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  // Staggered reveal animations
+  requestAnimationFrame(() => {
+    setTimeout(() => { showSignals.value = true }, 100)
+    setTimeout(() => { showChecklist.value = true }, 400)
+  })
+})
+
+onBeforeUnmount(() => {
+  stopIntradayTimer()
+  stopJudgmentTimer()
+  stopBreadthTimer()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
+</script>
+
+<style scoped>
+/* ===== ATMOSPHERIC BACKGROUND ===== */
+.atmo-mesh {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 600px 400px at 15% 20%, rgba(0, 113, 227, 0.06), transparent),
+    radial-gradient(ellipse 500px 500px at 85% 70%, rgba(48, 209, 88, 0.04), transparent),
+    radial-gradient(ellipse 400px 300px at 50% 90%, rgba(255, 69, 58, 0.03), transparent);
+}
+
+.dashboard {
+  position: relative;
+  z-index: 1;
+  padding: 24px;
+  max-width: 1460px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ===== LOADING ===== */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 24px;
+}
+
+.pulse-loader {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+
+.pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  opacity: 0;
+  animation: pulse-expand 2s ease-out infinite;
+}
+
+.pulse-ring.delay {
+  animation-delay: 0.6s;
+}
+
+.pulse-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-expand {
+  0% { transform: scale(0.5); opacity: 0.8; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.3); }
+}
+
+.loading-text {
+  color: var(--text-secondary);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+}
+
+/* ===== INDEX CARDS ===== */
+.index-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.index-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.3s, transform 0.2s;
+  min-height: 154px;
+  contain: layout style;
+}
+
+.index-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.index-card__header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.index-card__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.index-card__price {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.index-card__change {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.index-card__change.up {
+  color: var(--red);
+}
+
+.index-card__change.down {
+  color: var(--green);
+}
+
+.index-card__sparkline {
+  margin: 0 -4px -4px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  min-height: 82px;
+}
+
+/* ===== MAIN GRID ===== */
+.main-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 20px;
+}
+
+/* ===== STATUS ORB ===== */
+.status-orb-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.orb-container {
+  position: relative;
+  width: 150px;
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+}
+
+.orb {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+  transition: all 0.6s ease;
+}
+
+.orb-glow {
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  filter: blur(30px);
+  opacity: 0.4;
+  transition: all 0.6s ease;
+}
+
+.orb-bull .orb-glow {
+  background: var(--red);
+}
+
+.orb-bear .orb-glow {
+  background: var(--green);
+}
+
+.orb-neutral .orb-glow {
+  background: var(--yellow);
+}
+
+.orb-bull {
+  background: linear-gradient(135deg, rgba(255, 69, 58, 0.2), rgba(255, 69, 58, 0.05));
+  border: 2px solid rgba(255, 69, 58, 0.3);
+  box-shadow: 0 0 60px rgba(255, 69, 58, 0.15);
+}
+
+.orb-bear {
+  background: linear-gradient(135deg, rgba(48, 209, 88, 0.2), rgba(48, 209, 88, 0.05));
+  border: 2px solid rgba(48, 209, 88, 0.3);
+  box-shadow: 0 0 60px rgba(48, 209, 88, 0.15);
+}
+
+.orb-neutral {
+  background: linear-gradient(135deg, rgba(255, 214, 10, 0.15), rgba(255, 214, 10, 0.03));
+  border: 2px solid rgba(255, 214, 10, 0.25);
+  box-shadow: 0 0 60px rgba(255, 214, 10, 0.1);
+}
+
+.orb-inner {
+  text-align: center;
+}
+
+.orb-label {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.orb-bull .orb-label { color: var(--red); }
+.orb-bear .orb-label { color: var(--green); }
+.orb-neutral .orb-label { color: var(--yellow); }
+
+/* Orbit rings */
+.orb-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid;
+  animation: orb-spin 20s linear infinite;
+}
+
+.ring-1 {
+  inset: -8px;
+  border-color: rgba(255, 255, 255, 0.04);
+}
+
+.ring-2 {
+  inset: -24px;
+  border-color: rgba(255, 255, 255, 0.02);
+  animation-direction: reverse;
+  animation-duration: 30s;
+}
+
+@keyframes orb-spin {
+  to { transform: rotate(360deg); }
+}
+
+.orb-meta {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.orb-meta__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.orb-meta__row:last-child {
+  border-bottom: none;
+}
+
+.orb-meta__key {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.orb-meta__val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pos-bull { color: var(--green) !important; }
+.pos-bear { color: var(--red) !important; }
+
+.confirmed {
+  color: var(--green);
+  padding: 2px 8px;
+  background: var(--green-dim);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.unconfirmed {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Score bar */
+.score-bar {
+  width: 100%;
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  height: 28px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 16px;
+  flex-shrink: 0;
+}
+
+.score-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 50px;
+  transition: flex 0.6s ease;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.score-segment.bull {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.score-segment.neutral {
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
+}
+
+.score-segment.bear {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+/* ===== SIGNALS PANEL ===== */
+.signals-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-btn {
+  margin-left: auto;
+}
+
+.title-icon {
+  font-size: 14px;
+}
+
+.signals-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: minmax(75px, auto);
+  gap: 10px;
+}
+
+.signal-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.3s, transform 0.3s, border-color 0.2s, background 0.2s;
+}
+
+.signal-card.signal-enter {
+  animation: signal-in 0.4s ease forwards;
+}
+
+@keyframes signal-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.signal-card:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.signal-card__indicator {
+  width: 4px;
+  min-height: 40px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.sig-bull { background: var(--red); }
+.sig-bear { background: var(--green); }
+.sig-neutral { background: var(--text-muted); opacity: 0.4; }
+
+.signal-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.signal-card__dim {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-card__dim .dim-name {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.signal-card__dim .dim-result {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  line-height: 1.5;
+}
+
+.dim-result.result-bull {
+  background: rgba(255, 69, 58, 0.12);
+  color: var(--red);
+}
+
+.dim-result.result-bear {
+  background: rgba(48, 209, 88, 0.12);
+  color: var(--green);
+}
+
+.dim-result.result-neutral {
+  background: rgba(255, 214, 10, 0.10);
+  color: var(--yellow);
+}
+
+.div-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.div-badge.bullish {
+  background: rgba(255, 69, 58, 0.15);
+  color: var(--red);
+}
+
+.div-badge.bearish {
+  background: rgba(48, 209, 88, 0.15);
+  color: var(--green);
+}
+
+.weight-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(0, 113, 227, 0.15);
+  color: var(--accent);
+  text-transform: none;
+}
+
+.score-wt {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.signal-card__desc {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.signal-card__indices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.signal-card__indices .index-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.signal-card__indices .index-tag.tag-bull {
+  background: var(--red-dim);
+  color: var(--red);
+}
+.signal-card__indices .index-tag.tag-bear {
+  background: var(--green-dim);
+  color: var(--green);
+}
+.signal-card__indices .index-tag.tag-neutral {
+  background: var(--bg-surface);
+  color: var(--text-muted);
+}
+.signal-card__dim .dim-hint {
+  font-size: 9px;
+  opacity: 0.5;
+  margin-left: 4px;
+  font-weight: 400;
+}
+
+.signal-card__tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.tag-bull {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.tag-bear {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.tag-neutral {
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
+}
+
+/* ===== LONG WINDOW ===== */
+.long-window-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.lw-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+}
+
+.lw-badge.pass {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.lw-badge.fail {
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
+}
+
+.lw-conditions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.lw-cond {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.lw-cond.pass {
+  border-color: rgba(48, 209, 88, 0.2);
+  background: rgba(48, 209, 88, 0.04);
+  color: var(--text-primary);
+}
+
+.lw-cond__icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
+}
+
+.lw-cond.pass .lw-cond__icon {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+/* ===== SECTOR CAPITAL FLOW ===== */
+.sector-flow-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.sector-flow-section .collapsible-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.collapse-arrow {
+  margin-left: auto;
+  font-size: 14px;
+  color: var(--text-secondary);
+  transition: transform 0.25s;
+}
+
+.collapse-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.sector-flow-section .collapsible-body {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease;
+  max-height: 800px;
+  opacity: 1;
+}
+
+.sector-flow-section .collapsible-body.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+.sector-flow-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 20px;
+}
+.sector-flow-group {
+  min-width: 0;
+}
+.sector-flow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.sector-flow-row:last-child { border-bottom: none; }
+.sector-flow-header {
+  color: var(--text-muted);
+  font-size: 12px;
+  border-bottom-color: var(--border);
+}
+.sf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-change { width: 60px; text-align: right; }
+.sf-flow { width: 80px; text-align: right; }
+.sf-lead { width: 70px; text-align: right; color: var(--text-muted); font-size: 12px; }
+@media (max-width: 768px) {
+  .sector-flow-grid { grid-template-columns: 1fr; }
+}
+
+/* ===== RS BADGE (inside sector-flow-section) ===== */
+.rs-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  margin-left: 4px;
+}
+
+.rs-badge.rs-strengthening {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.rs-badge.rs-weakening {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.rs-badge.rs-mixed {
+  background: rgba(255, 214, 10, 0.12);
+  color: #ffd60a;
+}
+
+.rs-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.rs-days {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.rs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.rs-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.rs-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.rs-header-row .rs-name,
+.rs-header-row .rs-excess,
+.rs-header-row .rs-ratio,
+.rs-header-row .rs-trend-h,
+.rs-header-row .rs-change-h {
+  font-weight: 500;
+}
+
+.rs-trend-h {
+  width: 32px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.rs-change-h {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.rs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.rs-row:last-child {
+  border-bottom: none;
+}
+
+.rs-name {
+  width: 68px;
+  font-size: 13px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-excess {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  width: 60px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.rs-ratio {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  width: 40px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.rs-trend {
+  font-size: 12px;
+  width: 32px;
+  text-align: center;
+}
+
+.rs-change {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  margin-left: auto;
+}
+
+.rs-change.up { color: var(--red); }
+.rs-change.down { color: var(--green); }
+
+.c-red { color: var(--red); }
+.c-green { color: var(--green); }
+.c-muted { color: var(--text-muted); }
+
+/* ===== MACRO FACTORS ===== */
+.macro-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.macro-section .collapsible-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.macro-section .collapsible-body {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease;
+  max-height: 800px;
+  opacity: 1;
+}
+
+.macro-section .collapsible-body.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+.macro-score-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 10px;
+  margin-left: 8px;
+}
+
+.macro-score-badge.macro-positive {
+  background: rgba(234, 57, 67, 0.12);
+  color: var(--red);
+}
+
+.macro-score-badge.macro-negative {
+  background: rgba(39, 174, 96, 0.12);
+  color: var(--green);
+}
+
+.macro-score-badge.macro-neutral {
+  background: rgba(255, 214, 10, 0.12);
+  color: #ffd60a;
+}
+
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.macro-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.macro-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.macro-card__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.macro-card__date {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.macro-card__value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.macro-card__num {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.macro-card__unit {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.macro-card__sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.macro-details {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.macro-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.macro-detail__factor {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 80px;
+}
+
+.macro-detail__signal {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 8px;
+}
+
+.macro-detail__signal.positive {
+  background: rgba(234, 57, 67, 0.12);
+  color: var(--red);
+}
+
+.macro-detail__signal.negative {
+  background: rgba(39, 174, 96, 0.12);
+  color: var(--green);
+}
+
+.macro-detail__signal.neutral {
+  background: rgba(255, 214, 10, 0.1);
+  color: #ffd60a;
+}
+
+.macro-detail__desc {
+  color: var(--text-muted);
+}
+
+/* ===== CHECKLIST ===== */
+.checklist-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.checklist-progress {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-left: auto;
+  padding: 2px 10px;
+  background: var(--accent-dim);
+  border-radius: var(--radius-pill);
+}
+
+.checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.2s;
+  user-select: none;
+  opacity: 0;
+  transform: translateX(-6px);
+}
+
+.checklist-item.check-enter {
+  animation: check-in 0.3s ease forwards;
+}
+
+@keyframes check-in {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.checklist-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.checklist-item input {
+  display: none;
+}
+
+.check-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  background: transparent;
+}
+
+.checked .check-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.check-mark {
+  font-size: 12px;
+  color: #fff;
+  font-weight: 700;
+}
+
+.check-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: color 0.2s;
+}
+
+.checked .check-text {
+  color: var(--text-primary);
+}
+
+/* ===== STRATEGY STOCK PICKS ===== */
+.strategy-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.strategy-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  margin-left: 4px;
+}
+
+.strategy-badge.trend {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.strategy-badge.pullback {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.strategy-badge.bottom {
+  background: rgba(88, 86, 214, 0.15);
+  color: #8b85f2;
+}
+
+.strategy-toggle {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  margin-left: 6px;
+  cursor: pointer;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.strategy-toggle:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mode-switch__track {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  position: relative;
+  transition: background 0.2s;
+  background: var(--accent);
+}
+
+.mode-switch__track.strict {
+  background: var(--red);
+}
+
+.mode-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.mode-switch__track.strict .mode-switch__thumb {
+  transform: translateX(14px);
+}
+
+.mode-switch__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 14px;
+  text-align: center;
+}
+
+.strategy-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.strategy-empty__icon {
+  font-size: 20px;
+  opacity: 0.5;
+}
+
+.prompt-block {
+  margin-bottom: 16px;
+}
+
+.prompt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.prompt-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.prompt-actions .btn.primary {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.prompt-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.prompt-code {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--font-mono);
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.conditions-block {
+  margin-bottom: 12px;
+}
+
+.conditions-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.condition-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.condition-tag.invalid {
+  background: rgba(234, 57, 67, 0.1);
+  color: #e74c3c;
+}
+
+.cookie-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  background: rgba(255, 193, 7, 0.08);
+  border-radius: 4px;
+  border-left: 2px solid #ffc107;
+}
+
+.prompt-edit {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  resize: vertical;
+  outline: none;
+}
+
+.prompt-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.screen-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.screen-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+}
+
+.screen-empty__text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.screen-error {
+  font-size: 13px;
+  color: #e74c3c;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.stock-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+.stock-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+}
+
+.stock-card:hover {
+  border-color: rgba(0, 113, 227, 0.3);
+  background: rgba(0, 113, 227, 0.04);
+  transform: translateY(-1px);
+}
+
+.stock-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.stock-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+}
+
+.stock-card__industry {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.stock-card__price {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.stock-card__val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-card__chg {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-card__chg.up { color: var(--red); }
+.stock-card__chg.down { color: var(--green); }
+
+.stock-card__meta {
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.stock-card__meta span {
+  background: var(--bg-surface-alt);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.stock-card__flow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+
+.flow-label {
+  color: var(--text-muted);
+}
+
+.stock-card__flow .up { color: var(--red); font-weight: 600; }
+.stock-card__flow .down { color: var(--green); font-weight: 600; }
+
+.screen-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 4px;
+}
+.screen-strategy-guide {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.04);
+  padding: 3px 10px;
+  border-radius: 4px;
+}
+
+.screen-refresh {
+  margin-top: 12px;
+  width: 100%;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 1024px) {
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .index-row {
+    grid-template-columns: 1fr;
+  }
+
+  .signals-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lw-conditions {
+    grid-template-columns: 1fr;
+  }
+
+  .rs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .macro-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stock-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .checklist-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .index-card__price {
+    font-size: 22px;
+  }
+}
+</style>
