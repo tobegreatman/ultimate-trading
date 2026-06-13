@@ -6,7 +6,7 @@ import { REFRESH_INTERVAL } from '../utils/constants.js'
 const STORAGE_KEY = 'watchlist'
 
 export const useWatchlistStore = defineStore('watchlist', () => {
-  const stocks = ref(loadJson(STORAGE_KEY, []))
+  const stocks = ref(loadJson(STORAGE_KEY, []).map(s => ({ pinned: false, ...s })))
   const quotes = ref({})
   const klineCache = ref({})
   let refreshTimer = null
@@ -20,7 +20,7 @@ export const useWatchlistStore = defineStore('watchlist', () => {
 
   function addStock(code, name) {
     if (stocks.value.find(s => s.code === code)) return
-    stocks.value.push({ code, name, addedAt: Date.now() })
+    stocks.value.push({ code, name, addedAt: Date.now(), pinned: false })
     save()
   }
 
@@ -32,6 +32,32 @@ export const useWatchlistStore = defineStore('watchlist', () => {
   function reorderStock(fromIdx, toIdx) {
     const item = stocks.value.splice(fromIdx, 1)[0]
     stocks.value.splice(toIdx, 0, item)
+    save()
+  }
+
+  function togglePin(code) {
+    const idx = stocks.value.findIndex(s => s.code === code)
+    if (idx === -1) return
+    const stock = stocks.value[idx]
+    stock.pinned = !stock.pinned
+    stocks.value.splice(idx, 1)
+    if (stock.pinned) {
+      const lastPinnedIdx = stocks.value.findLastIndex(s => s.pinned)
+      stocks.value.splice(lastPinnedIdx + 1, 0, stock)
+    } else {
+      const firstUnpinnedIdx = stocks.value.findIndex(s => !s.pinned)
+      if (firstUnpinnedIdx === -1) {
+        stocks.value.push(stock)
+      } else {
+        stocks.value.splice(firstUnpinnedIdx, 0, stock)
+      }
+    }
+    save()
+  }
+
+  function removeBatch(codes) {
+    const codeSet = new Set(codes)
+    stocks.value = stocks.value.filter(s => !codeSet.has(s.code))
     save()
   }
 
@@ -92,7 +118,7 @@ export const useWatchlistStore = defineStore('watchlist', () => {
 
   return {
     stocks, quotes, klineCache, codes,
-    addStock, removeStock, reorderStock, fetchQuotes, fetchKline,
+    addStock, removeStock, reorderStock, togglePin, removeBatch, fetchQuotes, fetchKline,
     startAutoRefresh, stopAutoRefresh
   }
 })

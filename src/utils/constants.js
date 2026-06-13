@@ -65,7 +65,7 @@ export const MARKET_STATUS = {
   'bull-lean': { label: '偏多', tag: 'tag-green', maxPosition: '50-70%', strategy: 'pullback', strategyName: '回调买入' },
   neutral: { label: '震荡', tag: 'tag-yellow', maxPosition: '≤50%', strategy: 'pullback', strategyName: '回调买入' },
   'bear-lean': { label: '偏空', tag: 'tag-yellow', maxPosition: '10-20%', strategy: null, strategyName: '仅观望' },
-  bear: { label: '熊市', tag: 'tag-red', maxPosition: '0-20%', strategy: null, strategyName: '空仓' }
+  bear: { label: '熊市', tag: 'tag-red', maxPosition: '0-10%', strategy: null, strategyName: '空仓' }
 }
 
 export const DRAWDOWN_PROTOCOL = [

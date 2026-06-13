@@ -836,7 +836,7 @@ function getOverallValuation(indices) {
 // ==================== 宏观数据 ====================
 
 async function fetchCPI() {
-  const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_CPI&columns=REPORT_DATE,TIME,NATIONAL_SAME,NATIONAL_SEQUENTIAL,NATIONAL_ACCUMULATE&pageSize=6&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB'
+  const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_CPI&columns=REPORT_DATE,TIME,NATIONAL_SAME,NATIONAL_SEQUENTIAL,NATIONAL_ACCUMULATE,CITY_SAME,RURAL_SAME&pageSize=6&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB'
   const data = await fetchJSON(url)
   const items = data.result?.data || []
   if (!items.length) return null
@@ -847,6 +847,9 @@ async function fetchCPI() {
     prev: items[1]?.NATIONAL_SAME || null,
     sequential: items[0].NATIONAL_SEQUENTIAL,
     accumulate: items[0].NATIONAL_ACCUMULATE,
+    // 成分组成：城市/农村分项（用于结构分析，非核心打分项）
+    citySame: items[0].CITY_SAME,
+    ruralSame: items[0].RURAL_SAME,
     date: items[0].TIME,
     history: items.slice(0, 6).map(i => ({ date: i.TIME, same: i.NATIONAL_SAME }))
   }
@@ -902,8 +905,30 @@ async function fetchGDP() {
     unit: '%',
     gdpSame: items[0].SUM_SAME,
     prevGdpSame: items[1]?.SUM_SAME || null,
+    // 成分组成：三次产业同比（用于结构分析 — 第二产业=工业/周期领先，第三产业=服务业）
+    firstSame: items[0].FIRST_SAME,
+    secondSame: items[0].SECOND_SAME,
+    thirdSame: items[0].THIRD_SAME,
     date: items[0].TIME,
     history: items.slice(0, 4).map(i => ({ date: i.TIME, gdp: i.SUM_SAME }))
+  }
+}
+
+// PPI（工业生产者出厂价格）— 价格平减的核心输入
+// 用途：把名义社融/信贷增速还原成实际物量增速，识别"价格虚增 vs 真实需求"
+async function fetchPPI() {
+  const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_PPI&columns=REPORT_DATE,TIME,BASE,BASE_SAME,BASE_ACCUMULATE&pageSize=6&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB'
+  const data = await fetchJSON(url)
+  const items = data.result?.data || []
+  if (!items.length) return null
+  return {
+    label: 'PPI',
+    unit: '%',
+    current: items[0].BASE_SAME,        // 同比（%）
+    prev: items[1]?.BASE_SAME || null,
+    accumulate: items[0].BASE_ACCUMULATE,
+    date: items[0].TIME,
+    history: items.slice(0, 6).map(i => ({ date: i.TIME, same: i.BASE_SAME }))
   }
 }
 
@@ -997,14 +1022,16 @@ async function fetchSocialFinancing() {
 
 /**
  * 宏观因子评分（-2 ~ +2 分，作为九维判据的修正项）
- * 规则：
+ * 规则（总量 + 成分组成双重维度）：
  *  PMI > 50.5 → +1, PMI < 49.5 → -1
  *  M1-M2剪刀差收窄（比上月更正）→ +1, 扩大（比上月更负）→ -1
  *  CPI > 2% → 通胀压力 → -0.5, CPI < 0% → 通缩风险 → -1
  *  GDP同比 > 5.5% → +0.5, GDP同比 < 4.5% → -0.5
- *  社融存量增速 > 10% → +0.5, < 8% → -0.5
+ *  社融：用实际增速（名义 - PPI）判断 → 名义强但实际弱视为价格虚增，下调
+ *  GDP结构：二产(工业)偏弱但总量达标 → -0.3；工业领涨 → +0.3
+ *  CPI城乡：显著背离时提示（弱信号，不打分）
  */
-function scoreMacroFactors(cpi, pmi, m2, gdp, sf) {
+function scoreMacroFactors(cpi, pmi, m2, gdp, sf, ppi) {
   let score = 0
   const details = []
 
@@ -1037,10 +1064,52 @@ function scoreMacroFactors(cpi, pmi, m2, gdp, sf) {
   }
 
   if (sf && sf.stockYoyGrowth != null) {
-    const g = sf.stockYoyGrowth
-    if (g > 5) { score += 0.5; details.push({ factor: '社融', value: g, signal: 'positive', desc: `社融年增量同比+${g}%，信用扩张偏强` }) }
-    else if (g < -5) { score -= 0.5; details.push({ factor: '社融', value: g, signal: 'negative', desc: `社融年增量同比${g}%，信用扩张放缓` }) }
-    else { details.push({ factor: '社融', value: g, signal: 'neutral', desc: `社融年增量同比${g}%，基本平稳` }) }
+    // 成分组成维度：用 PPI 把名义增速还原成实际增速
+    // 实际增速 ≈ 名义增速 - PPI同比（Fisher 近似）。社融主投实体，PPI 是工业品价格，
+    // 平减后即可区分"价格被动虚增"与"真实融资需求"——对应企事业贷款的被动/真实之分
+    const nominalG = sf.stockYoyGrowth
+    const ppiInflation = ppi?.current
+    const realG = ppiInflation != null ? +(nominalG - ppiInflation).toFixed(1) : nominalG
+    const hasDeflator = ppiInflation != null
+
+    if (realG > 5) {
+      score += 0.5; details.push({ factor: '社融', value: realG, signal: 'positive',
+        desc: hasDeflator ? `社融实际增速${realG}%(名义${nominalG}%剔除PPI ${ppiInflation}%)，信用扩张扎实` : `社融年增量同比+${nominalG}%，信用扩张偏强` })
+    } else if (realG < -5) {
+      score -= 0.5; details.push({ factor: '社融', value: realG, signal: 'negative',
+        desc: hasDeflator ? `社融实际增速${realG}%(名义${nominalG}%剔除PPI)，信用扩张放缓` : `社融年增量同比${nominalG}%，信用扩张放缓` })
+    } else if (hasDeflator && nominalG > 5 && realG <= 5) {
+      // 名义看着强、剔除价格后转弱 → 价格虚增，不加分并明确提示
+      details.push({ factor: '社融', value: realG, signal: 'neutral',
+        desc: `社融名义${nominalG}%看似扩张，剔除PPI后实际仅${realG}%，部分为价格推动` })
+    } else {
+      details.push({ factor: '社融', value: realG, signal: 'neutral',
+        desc: hasDeflator ? `社融实际增速${realG}%(名义${nominalG}%)，基本平稳` : `社融年增量同比${nominalG}%，基本平稳` })
+    }
+  }
+
+  // 成分组成维度：GDP 三次产业结构 —— 总量可能达标，但结构（工业强弱）决定可持续性
+  if (gdp && gdp.secondSame != null && gdp.thirdSame != null) {
+    const ind = gdp.secondSame   // 第二产业（工业，周期领先指标）
+    const svc = gdp.thirdSame    // 第三产业（服务业）
+    if (gdp.gdpSame >= 5 && ind < 4) {
+      score -= 0.3; details.push({ factor: 'GDP结构', value: ind, signal: 'negative', desc: `总量${gdp.gdpSame}%但二产(工业)仅${ind}%，制造业/投资偏弱` })
+    } else if (ind >= 5.5 && svc < 4) {
+      score += 0.3; details.push({ factor: 'GDP结构', value: ind, signal: 'positive', desc: `工业${ind}%领涨(周期领先)，结构偏积极` })
+    } else if (ind >= 5 && svc >= 5) {
+      details.push({ factor: 'GDP结构', value: ind, signal: 'positive', desc: `二产${ind}%/三产${svc}%，扩张面广、结构均衡` })
+    } else {
+      details.push({ factor: 'GDP结构', value: ind, signal: 'neutral', desc: `二产${ind}%/三产${svc}%` })
+    }
+  }
+
+  // 成分组成维度：CPI 城乡分化 —— 弱信号，仅显著背离时提示，不打分避免噪声
+  if (cpi && cpi.citySame != null && cpi.ruralSame != null) {
+    const diff = +(cpi.citySame - cpi.ruralSame).toFixed(1)
+    if (Math.abs(diff) >= 1) {
+      const higher = diff > 0 ? '城市' : '农村'
+      details.push({ factor: 'CPI城乡', value: diff, signal: 'neutral', desc: `${higher}CPI偏高(城${cpi.citySame}%/乡${cpi.ruralSame}%)，需求结构分化` })
+    }
   }
 
   // Clamp to [-2, 2]
@@ -1056,15 +1125,16 @@ async function handleMacro(ctx) {
       return
     }
 
-    const [cpi, pmi, m2, gdp, sf] = await Promise.all([
+    const [cpi, pmi, m2, gdp, sf, ppi] = await Promise.all([
       fetchCPI().catch(e => { console.warn('CPI fetch failed:', e.message); return null }),
       fetchPMI().catch(e => { console.warn('PMI fetch failed:', e.message); return null }),
       fetchM2().catch(e => { console.warn('M2 fetch failed:', e.message); return null }),
       fetchGDP().catch(e => { console.warn('GDP fetch failed:', e.message); return null }),
       fetchSocialFinancing().catch(e => { console.warn('SocialFinancing fetch failed:', e.message); return null }),
+      fetchPPI().catch(e => { console.warn('PPI fetch failed:', e.message); return null }),
     ])
 
-    const scored = scoreMacroFactors(cpi, pmi, m2, gdp, sf)
+    const scored = scoreMacroFactors(cpi, pmi, m2, gdp, sf, ppi)
 
     const responseData = {
       timestamp: new Date().toISOString(),
@@ -1072,7 +1142,11 @@ async function handleMacro(ctx) {
       pmi,
       m2,
       gdp,
-      sf,
+      // 成分组成：附 PPI 平减后的实际增速（与 scoreMacroFactors 同公式），供前端展示
+      sf: ppi?.current != null && sf?.stockYoyGrowth != null
+        ? { ...sf, realStockYoyGrowth: +(sf.stockYoyGrowth - ppi.current).toFixed(1) }
+        : sf,
+      ppi,
       macroScore: scored.score,
       macroDetails: scored.details
     }

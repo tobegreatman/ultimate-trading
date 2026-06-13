@@ -29,69 +29,114 @@
     <div class="split-layout">
       <!-- Sidebar -->
       <aside class="sidebar">
-        <!-- Search -->
-        <div class="search-box">
-          <input
-            v-model="searchKw"
-            type="search"
-            placeholder="搜索代码、名称或拼音"
-            @input="onSearchInput"
-            @focus="showSearch = true"
-          />
-          <div v-if="showSearch && searchResults.length" class="search-dropdown">
-            <div
-              v-for="r in searchResults"
-              :key="r.code"
-              class="search-item"
-              @click="addFromSearch(r)"
-            >
-              <span class="search-item__name">{{ r.name }}</span>
-              <span class="search-item__code">{{ r.code }}</span>
+        <!-- Normal mode: search + batch entry -->
+        <div v-if="!batchMode" class="sidebar-header">
+          <div class="search-box">
+            <input
+              v-model="searchKw"
+              type="search"
+              placeholder="搜索代码、名称或拼音"
+              @input="onSearchInput"
+              @focus="showSearch = true"
+            />
+            <div v-if="showSearch && searchResults.length" class="search-dropdown">
+              <div
+                v-for="r in searchResults"
+                :key="r.code"
+                class="search-item"
+                @click="addFromSearch(r)"
+              >
+                <span class="search-item__name">{{ r.name }}</span>
+                <span class="search-item__code">{{ r.code }}</span>
+              </div>
             </div>
           </div>
+          <button
+            v-if="watchlistStore.stocks.length >= 2"
+            class="btn btn-ghost btn-sm batch-entry-btn"
+            @click="enterBatchMode"
+          >批量管理</button>
+        </div>
+
+        <!-- Batch mode toolbar -->
+        <div v-else class="batch-toolbar">
+          <button class="btn btn-ghost btn-sm" @click="toggleSelectAll">
+            {{ allSelected ? '取消全选' : '全选' }}
+          </button>
+          <span class="batch-count">已选 {{ batchSelected.length }} 项</span>
+          <button
+            class="btn btn-danger btn-sm"
+            :disabled="!batchSelected.length"
+            @click="deleteBatch"
+          >删除</button>
+          <button class="btn btn-ghost btn-sm" @click="exitBatchMode">取消</button>
         </div>
 
         <!-- Watchlist -->
-        <div class="stock-list">
+        <div class="stock-list" :class="{ 'batch-mode': batchMode }">
           <div v-if="!watchlistStore.stocks.length" class="empty-hint">
             搜索并添加自选股
           </div>
-          <div
-            v-for="(stock, idx) in watchlistStore.stocks"
-            :key="stock.code"
-            class="stock-item"
-            :class="{ active: selectedCode === stock.code, dragging: dragIdx === idx, 'drag-over': dragOverIdx === idx }"
-            draggable="true"
-            @dragstart="onDragStart($event, idx)"
-            @dragover.prevent="onDragOver($event, idx)"
-            @dragend="onDragEnd"
-            @click="selectStock(stock.code)"
-          >
-            <div class="drag-handle">⠿</div>
-            <div class="stock-item__info">
-              <div class="stock-item__name">{{ stock.name }}</div>
-              <div class="stock-item__code">{{ stock.code }}</div>
-            </div>
-            <div class="stock-item__price-col">
-              <div class="stock-item__price" :class="getQuoteClass(stock.code)">
-                {{ getQuotePrice(stock.code) }}
+          <template v-for="(stock, idx) in watchlistStore.stocks" :key="stock.code">
+            <div
+              class="stock-item"
+              :class="{
+                active: !batchMode && selectedCode === stock.code,
+                dragging: !batchMode && dragIdx === idx,
+                'drag-over': !batchMode && dragOverIdx === idx,
+                pinned: stock.pinned,
+                'batch-selected': batchMode && batchSelected.includes(stock.code)
+              }"
+              :draggable="!batchMode"
+              @dragstart="!batchMode && onDragStart($event, idx)"
+              @dragover.prevent="!batchMode && onDragOver($event, idx)"
+              @dragend="!batchMode && onDragEnd()"
+              @click="batchMode ? toggleBatchItem(stock.code) : selectStock(stock.code)"
+            >
+              <!-- Checkbox (batch mode) -->
+              <div v-if="batchMode" class="batch-check" :class="{ checked: batchSelected.includes(stock.code) }">
+                <svg v-if="batchSelected.includes(stock.code)" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3.5 8.5 6.5 11.5 12.5 4.5" />
+                </svg>
               </div>
-              <div class="stock-item__change" :class="getQuoteClass(stock.code)">
-                {{ getQuoteChange(stock.code) }}
+
+              <!-- Drag handle (normal mode) -->
+              <div v-else class="drag-handle">⠿</div>
+
+              <!-- Pin button -->
+              <button class="pin-btn" :class="{ active: stock.pinned }" @click.stop="onTogglePin(stock.code)" :title="stock.pinned ? '取消置顶' : '置顶'">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                  <path d="M16 3a1 1 0 0 1 .7.3l4 4a1 1 0 0 1-.3 1.6L17 10.4l.6 5.6a1 1 0 0 1-1 1H13v5a1 1 0 0 1-2 0v-5H7.4a1 1 0 0 1-1-1L7 10.4 3.6 8.9a1 1 0 0 1-.3-1.6l4-4A1 1 0 0 1 8 3h8z"/>
+                </svg>
+              </button>
+
+              <div class="stock-item__info">
+                <div class="stock-item__name">{{ stock.name }}</div>
+                <div class="stock-item__code">{{ stock.code }}</div>
+              </div>
+              <div class="stock-item__price-col">
+                <div class="stock-item__price" :class="getQuoteClass(stock.code)">
+                  {{ getQuotePrice(stock.code) }}
+                </div>
+                <div class="stock-item__change" :class="getQuoteClass(stock.code)">
+                  {{ getQuoteChange(stock.code) }}
+                </div>
+              </div>
+              <div class="stock-item__mini">
+                <Sparkline
+                  v-if="getMiniData(stock.code).length"
+                  :data="getMiniData(stock.code)"
+                  :positive="isQuoteUp(stock.code)"
+                  :width="52"
+                  :height="24"
+                  :ref-price="getMiniRefPrice(stock.code)"
+                  :total-slots="240"
+                />
               </div>
             </div>
-            <div class="stock-item__mini">
-              <Sparkline
-                v-if="getMiniData(stock.code).length"
-                :data="getMiniData(stock.code)"
-                :positive="isQuoteUp(stock.code)"
-                :width="52"
-                :height="24"
-                :ref-price="getMiniRefPrice(stock.code)"
-                :total-slots="240"
-              />
-            </div>
-          </div>
+            <!-- Divider between pinned and unpinned -->
+            <div v-if="stock.pinned && isLastPinned(idx)" class="pin-divider" :key="'divider-' + stock.code"></div>
+          </template>
         </div>
       </aside>
 
@@ -136,9 +181,9 @@
 
           <!-- Stats grid -->
           <div class="stats-grid">
-            <div v-for="stat in statsItems" :key="stat.label" class="stat-item">
+            <div v-for="stat in statsItems" :key="stat.label" class="stat-item" :class="{ 'stat-item--wide': stat.wide }">
               <div class="stat-label">{{ stat.label }}</div>
-              <div class="stat-value">{{ stat.value }}</div>
+              <div class="stat-value" :class="stat.tone">{{ stat.value }}</div>
             </div>
           </div>
 
@@ -175,21 +220,27 @@ const selectedCode = ref(null)
 const activePeriod = ref('1d')
 let searchTimer = null
 
+// Batch mode state
+const batchMode = ref(false)
+const batchSelected = ref([]) // array of stock codes
+
+const allSelected = computed(() =>
+  batchSelected.value.length === watchlistStore.stocks.length && watchlistStore.stocks.length > 0
+)
+
 // Intraday data for top index bar
 const indexIntraday = ref({ sh: { name: '上证指数', trends: [], isUp: false, close: null, change: null, preClose: null }, sz: { name: '深证成指', trends: [], isUp: false, close: null, change: null, preClose: null }, cyb: { name: '创业板指', trends: [], isUp: false, close: null, change: null, preClose: null } })
 
 // Cache for detail data
 const intradayCache = ref({})
 const detailLoading = ref(false)
-const intraday5dCache = ref({})
 const klineCache = ref({})
 const kline5yCache = ref({})
 const basicCache = ref({})
 
 const periods = [
   { key: '1d', label: '1日' },
-  { key: '1w', label: '1周' },
-  { key: '3m', label: '3月' },
+  { key: '6m', label: '6月' },
   { key: '1y', label: '1年' },
   { key: '5y', label: '5年' },
   { key: 'all', label: '全部' }
@@ -199,20 +250,18 @@ const chartData = computed(() => {
   if (!selectedCode.value) return []
   const p = activePeriod.value
   if (p === '1d') return intradayCache.value[selectedCode.value]?.trends || []
-  if (p === '1w') return intraday5dCache.value[selectedCode.value]?.trends || []
-  if (p === '3m') return (klineCache.value[selectedCode.value]?.klines || []).slice(-60)
+  if (p === '6m') return (klineCache.value[selectedCode.value]?.klines || []).slice(-120)
   if (p === '1y') return (kline5yCache.value[selectedCode.value]?.klines || []).slice(-250)
   if (p === '5y' || p === 'all') return kline5yCache.value[selectedCode.value]?.klines || []
   return []
 })
 
-const isKlineMode = computed(() => ['3m', '1y', '5y', 'all'].includes(activePeriod.value))
+const isKlineMode = computed(() => ['6m', '1y', '5y', 'all'].includes(activePeriod.value))
 
 const chartPositive = computed(() => isQuoteUp(selectedCode.value))
-const chartTotalSlots = computed(() => (activePeriod.value === '1d' || activePeriod.value === '1w') ? 240 : 0)
+const chartTotalSlots = computed(() => activePeriod.value === '1d' ? 240 : 0)
 const chartRefPrice = computed(() => {
   if (activePeriod.value === '1d') return intradayCache.value[selectedCode.value]?.preClose || null
-  if (activePeriod.value === '1w') return intraday5dCache.value[selectedCode.value]?.preClose || null
   return null
 })
 
@@ -231,7 +280,10 @@ const statsItems = computed(() => {
     { label: '市盈率 PE', value: basic.pe?.toFixed(1) || '--' },
     { label: '市净率 PB', value: basic.pb?.toFixed(2) || '--' },
     { label: '总市值', value: formatCap(basic.totalMarketCap) },
-    { label: '涨跌幅', value: getQuoteChange(selectedCode.value) }
+    { label: '涨跌幅', value: getQuoteChange(selectedCode.value), tone: getQuoteClass(selectedCode.value) },
+    { label: '所属行业', value: basic.industry || '--', tone: 'sector' },
+    { label: '地域板块', value: basic.region || '--', tone: 'sector' },
+    { label: '概念板块', value: basic.concept || '--', wide: true, tone: 'sector' }
   ]
 })
 
@@ -298,7 +350,7 @@ async function selectStock(code) {
   selectedCode.value = code
   const hasKline = !!klineCache.value[code]
   const hasIntraday = !!intradayCache.value[code]
-  const hasBasic = !!basicCache.value[code]
+  const hasBasic = !!basicCache.value[code]?.industry
   detailLoading.value = true
   // Fetch missing data, keep cache on failure
   if (!hasKline) {
@@ -328,11 +380,6 @@ async function selectStock(code) {
 
 function switchPeriod(key) {
   activePeriod.value = key
-  if (key === '1w' && selectedCode.value && !intraday5dCache.value[selectedCode.value]) {
-    fetch(`/api/stock/${selectedCode.value}/intraday5d`)
-      .then(r => r.json())
-      .then(json => { if (json.ok && json.data?.trends?.length) intraday5dCache.value[selectedCode.value] = json.data })
-  }
   // Load 5y data on demand
   if ((key === '5y' || key === 'all') && selectedCode.value && !kline5yCache.value[selectedCode.value]) {
     fetch(`/api/stock/${selectedCode.value}/kline5y`)
@@ -348,6 +395,53 @@ function removeSelected() {
   selectedCode.value = null
 }
 
+// --- Pin to top ---
+function onTogglePin(code) {
+  watchlistStore.togglePin(code)
+}
+
+function isLastPinned(idx) {
+  const list = watchlistStore.stocks
+  return list[idx]?.pinned && (idx === list.length - 1 || !list[idx + 1]?.pinned)
+}
+
+// --- Batch delete ---
+function enterBatchMode() {
+  batchMode.value = true
+  batchSelected.value = []
+}
+
+function exitBatchMode() {
+  batchMode.value = false
+  batchSelected.value = []
+}
+
+function toggleBatchItem(code) {
+  const idx = batchSelected.value.indexOf(code)
+  if (idx === -1) {
+    batchSelected.value.push(code)
+  } else {
+    batchSelected.value.splice(idx, 1)
+  }
+}
+
+function toggleSelectAll() {
+  if (allSelected.value) {
+    batchSelected.value = []
+  } else {
+    batchSelected.value = watchlistStore.stocks.map(s => s.code)
+  }
+}
+
+function deleteBatch() {
+  if (!batchSelected.value.length) return
+  watchlistStore.removeBatch(batchSelected.value)
+  if (batchSelected.value.includes(selectedCode.value)) {
+    selectedCode.value = null
+  }
+  exitBatchMode()
+}
+
 // --- Drag & drop reorder ---
 const dragIdx = ref(null)
 const dragOverIdx = ref(null)
@@ -360,6 +454,9 @@ function onDragStart(e, idx) {
 
 function onDragOver(e, idx) {
   if (dragIdx.value === null || dragIdx.value === idx) return
+  // Enforce pinned/unpinned zone boundary
+  const stocks = watchlistStore.stocks
+  if (stocks[dragIdx.value].pinned !== stocks[idx].pinned) return
   dragOverIdx.value = idx
 }
 
@@ -455,6 +552,11 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
+// Auto-exit batch mode when list becomes empty
+watch(() => watchlistStore.stocks.length, (len) => {
+  if (len === 0 && batchMode.value) exitBatchMode()
+})
+
 onBeforeUnmount(() => {
   stopIndexTimer()
   stopDetailIntradayTimer()
@@ -468,7 +570,7 @@ onBeforeUnmount(() => {
 .watchlist {
   max-width: 1460px;
   margin: 0 auto;
-  height: calc(100vh - 52px);
+  height: calc(100vh - 56px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -625,7 +727,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px;
+  padding: 6px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
@@ -710,6 +812,107 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+/* ===== SIDEBAR HEADER ===== */
+.sidebar-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sidebar-header .search-box {
+  flex: 1;
+  position: relative;
+}
+
+.batch-entry-btn {
+  flex-shrink: 0;
+}
+
+/* ===== BATCH TOOLBAR ===== */
+.batch-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.batch-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== BATCH CHECKBOX ===== */
+.batch-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.batch-check.checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* ===== PIN BUTTON ===== */
+.pin-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.stock-item:hover .pin-btn {
+  opacity: 0.5;
+}
+
+.pin-btn.active {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.pin-btn:hover {
+  opacity: 1 !important;
+  color: var(--accent);
+}
+
+/* ===== PINNED STOCK ===== */
+.stock-item.pinned {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+
+.pin-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 10px;
+}
+
+/* ===== BATCH MODE ===== */
+.stock-item.batch-selected {
+  background: var(--accent-dim);
+}
+
+.stock-list.batch-mode .stock-item__mini,
+.stock-list.batch-mode .stock-item__price-col {
+  opacity: 0.5;
+}
+
 /* ===== DETAIL PANEL ===== */
 .detail-panel {
   flex: 1;
@@ -765,7 +968,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 16px;
-  min-height: 280px;
+  min-height: 300px;
 }
 
 .chart-loading {
@@ -779,15 +982,15 @@ onBeforeUnmount(() => {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
 }
 
 .stat-item {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 10px 14px;
+  padding: 5px 10px;
 }
 
 .stat-label {
@@ -797,9 +1000,32 @@ onBeforeUnmount(() => {
 }
 
 .stat-value {
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.stat-value.up {
+  color: var(--red);
+}
+
+.stat-value.down {
+  color: var(--green);
+}
+
+.stat-value.sector {
+  color: var(--accent);
+}
+
+.stat-item--wide {
+  grid-column: span 6;
+}
+
+.stat-item--wide .stat-value {
+  font-size: 13px;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .detail-actions {

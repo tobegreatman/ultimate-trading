@@ -55,7 +55,7 @@
         <div class="diagnosis-cards">
         <div class="diag-card" :style="{ borderColor: scoreResult?.suggestionColor || 'var(--border)' }">
           <div class="diag-label">综合评分</div>
-          <div class="diag-value score-value">{{ scoreResult?.total ?? '--' }}</div>
+          <div class="diag-value">{{ scoreResult?.total ?? '--' }}</div>
           <div class="diag-sub" :style="{ color: scoreResult?.suggestionColor }">{{ scoreResult?.suggestion ?? '--' }}</div>
         </div>
         <div class="diag-card clickable" @click="activeTab = 'technical'">
@@ -73,6 +73,12 @@
       </div>
         <div class="style-switcher">
           <button v-for="st in styleOptions" :key="st.key" :class="['style-btn', { active: investStyle === st.key }]" @click="onStyleChange(st.key)" :title="st.hint">{{ st.label }}</button>
+        </div>
+        <div class="tabs">
+          <button v-for="tab in tabs" :key="tab.key" :class="['tab-btn', { active: activeTab === tab.key }]" @click="activeTab = tab.key">
+            {{ tab.label }}
+            <span v-if="tabErrors[tab.key]" class="tab-err-dot" />
+          </button>
         </div>
       </div>
 
@@ -146,12 +152,6 @@
           <button class="sg-add-btn" @click="addToJournal" :disabled="alreadyOpened">+ 建仓</button>
         </div>
         <div v-if="addToast" class="sg-toast">{{ addToast }}</div>
-      </div>
-      <div class="tabs">
-        <button v-for="tab in tabs" :key="tab.key" :class="['tab-btn', { active: activeTab === tab.key }]" @click="activeTab = tab.key">
-          {{ tab.label }}
-          <span v-if="tabErrors[tab.key]" class="tab-err-dot" />
-        </button>
       </div>
 
       <!-- 分项加载失败提示 -->
@@ -609,7 +609,7 @@ onBeforeUnmount(() => {
 }
 
 .stock-select {
-  padding: 6px 12px;
+  padding: 5px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-surface);
@@ -635,7 +635,7 @@ onBeforeUnmount(() => {
   gap: 2px;
   background: var(--bg-surface);
   border-radius: var(--radius-md);
-  padding: 4px 8px;
+  padding: 2px 8px;
   border: 1px solid var(--border);
 }
 
@@ -849,10 +849,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.score-value {
-  font-size: 20px;
-}
-
 .diag-sub {
   font-size: 12px;
   font-weight: 500;
@@ -1031,15 +1027,18 @@ onBeforeUnmount(() => {
 /* Tabs */
 .tabs {
   display: flex;
-  gap: 2px;
+  flex-wrap: nowrap;
+  gap: 8px;
   background: var(--bg-surface);
   border-radius: var(--radius-sm);
-  padding: 3px;
+  padding: 2px;
+  overflow-x: auto;
+  min-width: 0;
 }
 
 .tab-btn {
   flex: 1;
-  padding: 8px 0;
+  padding: 4px 8px;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -1047,6 +1046,7 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
   transition: all 0.2s;
 }
 

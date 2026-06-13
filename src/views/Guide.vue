@@ -18,10 +18,15 @@
       <section id="ch-buy" class="guide-section">
         <h2 class="ch-title"><span class="ch-icon">🛒</span> 想买入</h2>
         <div class="decision-tree">
-          <div v-for="(node, i) in buyDecisionTree" :key="i" class="dt-node" :class="node.type">
-            <div class="dt-q">{{ node.q }}</div>
-            <div class="dt-branch yes" v-if="node.yes">是 → {{ node.yes }}</div>
-            <div class="dt-branch no" v-if="node.no">否 → {{ node.no }}</div>
+          <div v-for="(node, i) in buyDecisionTree" :key="i" class="dt-node" :class="[node.type, { 'dt-last': i === buyDecisionTree.length - 1 }]">
+            <div class="dt-step-num">{{ i + 1 }}</div>
+            <div class="dt-content">
+              <div class="dt-q">
+                {{ node.q }}
+                <span v-if="node.yes" class="dt-tag dt-tag--yes">是 → {{ node.yes }}</span>
+                <span v-if="node.no" class="dt-tag dt-tag--no">否 → {{ node.no }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -31,7 +36,7 @@
         <h2 class="ch-title"><span class="ch-icon">📊</span> 市场趋势状态</h2>
 
         <h3 class="sub-title">九维判据</h3>
-        <p class="section-desc">系统自动采集 9 个维度数据（8维技术 + 宏观因子辅助），采用加权评分机制判断牛/震/熊信号：</p>
+        <p class="section-desc">系统自动采集 9 个维度数据（7维核心技术 + 宏观因子辅助 + 波动率），采用加权评分机制判断牛/震/熊信号：</p>
         <table class="market-dim-table">
           <thead>
             <tr><th>维度(权重)</th><th>数据来源</th><th>牛市信号</th><th>熊市信号</th></tr>
@@ -47,7 +52,7 @@
         </table>
 
         <h3 class="sub-title">综合判定规则</h3>
-        <p class="section-desc">加权评分 + 状态惯性（hysteresis）机制，跨方向切换需 |net| ≥ 2.5：</p>
+        <p class="section-desc">加权评分 + 状态惯性（hysteresis）机制。同方向（牛↔偏多、熊↔偏空）自由切换；跨方向翻转需 |net| ≥ 1.7 + 连续 2 个交易日确认 + 3 个交易日冷却期；紧急翻转（加权分 ≥ 7.0）跳过确认和冷却：</p>
         <div class="status-cards">
           <div v-for="s in marketStatusTable" :key="s.tag" class="status-card" :class="s.tag">
             <div class="status-card__name" :style="{ color: s.color }">{{ s.status }}</div>
@@ -159,7 +164,7 @@
             <tr><td>牛市确认</td><td>80-100%</td><td>均线多头排列 + 广度共振</td></tr>
             <tr><td>震荡偏多</td><td>50-70%</td><td>站上MA60但未确认趋势</td></tr>
             <tr><td>震荡偏空</td><td>20-40%</td><td>跌破MA60但未确认熊市</td></tr>
-            <tr><td>熊市</td><td>0-20%</td><td>均线空头排列 + 全面走弱</td></tr>
+            <tr><td>熊市</td><td>0-10%</td><td>均线空头排列 + 全面走弱</td></tr>
           </tbody>
         </table>
 
@@ -283,21 +288,22 @@ const marketDimensions = [
   { name: '量价配合 (1.3)', source: '上证指数OBV趋势+背离', bull: '价涨量增/OBV底背离（强2.0）', bear: '放量下跌/OBV顶背离（强2.0）' },
   { name: '北向资金 (1.5)', source: '近20日北向成交额均量比', bull: '5日均量/20日均量≥1.2', bear: '5日均量/20日均量≤0.8' },
   { name: '涨跌停 (1.3)', source: '并行评分（涨跌比/跌停数/封板率等）', bull: '评分net≥2（强≥4→2.0）', bear: '评分net≤-2（强≤-4→2.0）' },
-  { name: '宏观因子 (≤1.0)', source: 'PMI/M1-M2剪刀差/CPI/GDP/社融', bull: 'PMI>50.5 + 剪刀差收窄 + GDP>5.5% + 社融>10%', bear: 'PMI<49.5 + 剪刀差扩大 + CPI<0% + 社融<8%' }
+  { name: '宏观因子 (≤1.0)', source: 'PMI/M1-M2剪刀差/CPI/GDP/社融', bull: 'PMI>50.5 + 剪刀差收窄 + GDP>5.5% + 社融>10%', bear: 'PMI<49.5 + 剪刀差扩大 + CPI<0% + 社融<8%' },
+  { name: '波动率 (1.0)', source: 'ATR(14)/收盘价 × 近60日百分位排名', bull: '低波动（百分位<30%）且稳定/下降，市场环境温和', bear: '高波动（百分位>80%）且上升，市场恐慌/不确定性高（强2.0）' }
 ]
 
 const marketStatusTable = [
-  { status: '牛市', tag: 'bull', condition: 'bullW ≥ 4.5 且 net > 0', position: '80-100%', strategy: '趋势突破', color: 'var(--red)' },
-  { status: '偏多', tag: 'bull-lean', condition: 'bullW ≥ 3.0 且 net > 0', position: '50-70%', strategy: '回调买入', color: 'var(--red)' },
+  { status: '牛市', tag: 'bull', condition: 'bullW ≥ 5.0 且 net > 0', position: '80-100%', strategy: '趋势突破', color: 'var(--red)' },
+  { status: '偏多', tag: 'bull-lean', condition: 'bullW ≥ 3.3 且 net > 0', position: '50-70%', strategy: '回调买入', color: 'var(--red)' },
   { status: '震荡', tag: 'neutral', condition: '其他', position: '≤50%', strategy: '回调买入', color: 'var(--text-secondary)' },
-  { status: '偏空', tag: 'bear-lean', condition: 'bearW ≥ 3.0 且 net < 0', position: '10-20%', strategy: '仅观望', color: 'var(--green)' },
-  { status: '熊市', tag: 'bear', condition: 'bearW ≥ 4.5 且 net < 0', position: '0-20%', strategy: '空仓', color: 'var(--green)' }
+  { status: '偏空', tag: 'bear-lean', condition: 'bearW ≥ 3.3 且 net < 0', position: '10-20%', strategy: '仅观望', color: 'var(--green)' },
+  { status: '熊市', tag: 'bear', condition: 'bearW ≥ 5.0 且 net < 0', position: '0-10%', strategy: '空仓', color: 'var(--green)' }
 ]
 
 const longWindowChecks = [
   { label: '指数收盘价 > MA60', desc: '指数站上60日均线' },
   { label: 'MA60 连续 3 天拐头向上', desc: '中期趋势转强确认' },
-  { label: '涨跌比 ≥ 1.5', desc: '市场广度偏强' }
+  { label: '涨跌比 ≥ 1.8', desc: '市场广度偏强' }
 ]
 
 const strategies = [
@@ -494,7 +500,7 @@ onBeforeUnmount(() => {
 }
 
 .guide-section {
-  margin-bottom: 48px;
+  margin-bottom: 36px;
 }
 
 .ch-title {
@@ -622,42 +628,108 @@ onBeforeUnmount(() => {
   margin-top: 2px;
 }
 
-/* Decision tree */
+/* Decision tree — vertical flowchart */
 .decision-tree {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
 .dt-node {
-  padding: 12px 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  padding: 10px 16px;
   border-radius: var(--radius-sm);
-  border-left: 3px solid var(--text-muted);
 }
 
 .dt-node.check {
   background: rgba(255, 255, 255, 0.02);
-  border-left-color: var(--accent);
 }
 
 .dt-node.action {
   background: var(--green-dim);
-  border-left-color: var(--green);
+}
+
+/* Step number badge */
+.dt-step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid rgba(0, 113, 227, 0.25);
+  position: relative;
+  z-index: 1;
+}
+
+.dt-node.action .dt-step-num {
+  background: rgba(48, 209, 88, 0.15);
+  color: var(--green);
+  border-color: rgba(48, 209, 88, 0.3);
+}
+
+/* Connector line between steps */
+.dt-node:not(.dt-last) .dt-step-num::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  height: calc(100% + 20px - 24px);
+  background: linear-gradient(180deg, var(--accent-dim), rgba(0, 113, 227, 0.06));
+  z-index: 0;
+}
+
+.dt-node:not(.dt-last).action .dt-step-num::after {
+  background: linear-gradient(180deg, rgba(48, 209, 88, 0.2), rgba(48, 209, 88, 0.04));
+}
+
+.dt-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .dt-q {
   font-weight: 600;
-  margin-bottom: 6px;
+  font-size: 14px;
+  line-height: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
-.dt-branch {
-  font-size: 12px;
-  padding-left: 16px;
-  margin-top: 2px;
+/* Yes/No inline tags */
+.dt-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
-.dt-branch.yes { color: var(--green); }
-.dt-branch.no { color: var(--red); }
+.dt-tag--yes {
+  background: rgba(48, 209, 88, 0.1);
+  color: var(--green);
+  border: 1px solid rgba(48, 209, 88, 0.2);
+}
+
+.dt-tag--no {
+  background: rgba(255, 69, 58, 0.08);
+  color: var(--red);
+  border: 1px solid rgba(255, 69, 58, 0.15);
+}
 
 /* Strategies */
 .strategy-block {
@@ -773,16 +845,16 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
 }
 
-/* Iron rules */
+/* Iron rules — 3-column grid */
 .iron-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
 }
 
 .iron-item {
   display: flex;
-  gap: 14px;
+  gap: 12px;
   padding: 14px 16px;
   background: var(--bg-surface);
   border-radius: var(--radius-sm);
@@ -790,28 +862,36 @@ onBeforeUnmount(() => {
 }
 
 .iron-num {
-  font-size: 20px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 69, 58, 0.1);
+  border: 1px solid rgba(255, 69, 58, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
   font-weight: 800;
   color: var(--red);
   flex-shrink: 0;
-  min-width: 20px;
 }
 
 .iron-rule {
   font-size: 14px;
   font-weight: 700;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 
 .iron-desc {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
 .iron-consequence {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--red);
   margin-top: 4px;
+  opacity: 0.85;
 }
 
 /* Emotions */
@@ -867,25 +947,34 @@ onBeforeUnmount(() => {
   margin-top: 7px;
 }
 
-/* Failure */
+/* Failure — grid cards */
 .failure-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
 }
 
 .failure-item {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
   background: var(--red-dim);
   border-radius: var(--radius-sm);
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .failure-num {
-  font-size: 18px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(255, 69, 58, 0.12);
+  border: 1px solid rgba(255, 69, 58, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
   font-weight: 800;
   color: var(--red);
   flex-shrink: 0;
@@ -942,6 +1031,14 @@ onBeforeUnmount(() => {
   }
 
   .emotion-list {
+    grid-template-columns: 1fr;
+  }
+
+  .iron-list {
+    grid-template-columns: 1fr;
+  }
+
+  .failure-list {
     grid-template-columns: 1fr;
   }
 

@@ -46,12 +46,12 @@
           <div class="orb-container">
             <div class="orb" :class="orbClass">
               <div class="orb-glow"></div>
+              <div class="orb-ring ring-1"></div>
+              <div class="orb-ring ring-2"></div>
               <div class="orb-inner">
                 <span class="orb-label">{{ judgment?.label || '--' }}</span>
               </div>
             </div>
-            <div class="orb-ring ring-1"></div>
-            <div class="orb-ring ring-2"></div>
           </div>
           <div class="orb-meta">
             <div class="orb-meta__row">
@@ -308,6 +308,28 @@
               环比 {{ analysisStore.macro.cpi.sequential > 0 ? '+' : '' }}{{ analysisStore.macro.cpi.sequential }}%
               · 累计 {{ analysisStore.macro.cpi.accumulate }}
             </div>
+            <div class="macro-card__sub" v-if="analysisStore.macro.cpi.citySame != null && analysisStore.macro.cpi.ruralSame != null">
+              城市 {{ analysisStore.macro.cpi.citySame }}% · 农村 {{ analysisStore.macro.cpi.ruralSame }}%
+            </div>
+          </div>
+
+          <div class="macro-card" v-if="analysisStore.macro.ppi">
+            <div class="macro-card__header">
+              <span class="macro-card__label">PPI</span>
+              <span class="macro-card__date">{{ analysisStore.macro.ppi.date }}</span>
+            </div>
+            <div class="macro-card__value">
+              <span class="macro-card__num" :class="analysisStore.macro.ppi.current >= 0 ? 'up' : 'down'">
+                {{ analysisStore.macro.ppi.current > 0 ? '+' : '' }}{{ analysisStore.macro.ppi.current }}%
+              </span>
+              <span class="macro-card__unit">同比</span>
+            </div>
+            <div class="macro-card__sub" v-if="analysisStore.macro.ppi.prev != null">
+              上月 {{ analysisStore.macro.ppi.prev }}%
+              <span :class="analysisStore.macro.ppi.current >= analysisStore.macro.ppi.prev ? 'up' : 'down'">
+                · {{ analysisStore.macro.ppi.current >= analysisStore.macro.ppi.prev ? '涨幅扩大' : '跌幅加深' }}
+              </span>
+            </div>
           </div>
 
           <div class="macro-card" v-if="analysisStore.macro.gdp">
@@ -321,6 +343,9 @@
             </div>
             <div class="macro-card__sub" v-if="analysisStore.macro.gdp.prevGdpSame != null">
               上期 {{ analysisStore.macro.gdp.prevGdpSame }}%
+            </div>
+            <div class="macro-card__sub" v-if="analysisStore.macro.gdp.secondSame != null">
+              一产 {{ analysisStore.macro.gdp.firstSame }}% · 二产 {{ analysisStore.macro.gdp.secondSame }}% · 三产 {{ analysisStore.macro.gdp.thirdSame }}%
             </div>
           </div>
 
@@ -340,6 +365,12 @@
               <span v-if="analysisStore.macro.sf.yoyChange != null" :class="analysisStore.macro.sf.yoyChange > 0 ? 'up' : 'down'">
                 · YoY {{ analysisStore.macro.sf.yoyChange > 0 ? '+' : '' }}{{ analysisStore.macro.sf.yoyChange }}亿
               </span>
+            </div>
+            <div class="macro-card__sub" v-if="analysisStore.macro.sf.realStockYoyGrowth != null && analysisStore.macro.sf.realStockYoyGrowth !== analysisStore.macro.sf.stockYoyGrowth">
+              <span :class="analysisStore.macro.sf.realStockYoyGrowth < analysisStore.macro.sf.stockYoyGrowth ? 'down' : 'up'">
+                实际 {{ analysisStore.macro.sf.realStockYoyGrowth }}%
+              </span>
+              (剔除PPI，名义{{ analysisStore.macro.sf.stockYoyGrowth }}%)
             </div>
           </div>
         </div>
@@ -897,7 +928,7 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
 }
 
 /* ===== LOADING ===== */
@@ -968,11 +999,11 @@ onBeforeUnmount(() => {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 10px;
   position: relative;
   overflow: hidden;
   transition: border-color 0.3s, transform 0.2s;
-  min-height: 154px;
+  min-height: 140px;
   contain: layout style;
 }
 
@@ -997,7 +1028,7 @@ onBeforeUnmount(() => {
 }
 
 .index-card__price {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
@@ -1056,8 +1087,8 @@ onBeforeUnmount(() => {
 }
 
 .orb {
-  width: 110px;
-  height: 110px;
+  width: 100px;
+  height: 100px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1236,7 +1267,7 @@ onBeforeUnmount(() => {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 24px;
+  padding: 16px 24px;
 }
 
 .panel-title {
@@ -1405,7 +1436,7 @@ onBeforeUnmount(() => {
   margin-top: 4px;
 }
 .signal-card__indices .index-tag {
-  font-size: 10px;
+  font-size: 9px;
   padding: 1px 5px;
   border-radius: 3px;
   background: var(--bg-surface-alt);
@@ -1460,7 +1491,7 @@ onBeforeUnmount(() => {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 24px;
+  padding: 20px 24px;
 }
 
 .lw-badge {
@@ -1490,7 +1521,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px;
+  padding: 10px 16px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1774,7 +1805,7 @@ onBeforeUnmount(() => {
 
 .macro-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -1815,6 +1846,14 @@ onBeforeUnmount(() => {
   font-size: 18px;
   font-weight: 700;
   font-family: var(--font-mono);
+}
+
+.macro-card__num.up {
+  color: var(--red);
+}
+
+.macro-card__num.down {
+  color: var(--green);
 }
 
 .macro-card__unit {

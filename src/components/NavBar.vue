@@ -18,7 +18,7 @@
             </defs>
           </svg>
         </span>
-        <span class="logo-text">SmartStock</span>
+        <span class="logo-text">Ultimate Trading System</span>
         <span class="logo-dot"></span>
       </router-link>
 
@@ -67,8 +67,8 @@ const pillOpacity = ref(0)
 
 const navItems = [
   { path: '/', icon: '📊', label: 'Dashboard' },
+  { path: '/stock-analysis', icon: '📈', label: 'Stock Analysis' },
   { path: '/watchlist', icon: '⭐', label: 'Watchlist' },
-  { path: '/stock-analysis', icon: '📈', label: '个股分析' },
   { path: '/analysis', icon: '🧭', label: 'Analysis' },
   { path: '/screener', icon: '🔍', label: 'Screener' },
   { path: '/position', icon: '📐', label: 'Position' },

@@ -18,28 +18,30 @@
             </div>
           </div>
 
-          <div class="form-row">
-            <label class="form-label">策略</label>
-            <select v-model="form.strategy">
-              <option value="trend">趋势突破 (N=1.5)</option>
-              <option value="pullback">回调买入 (N=2.0)</option>
-              <option value="bottom">底部右侧确认 (N=3.0)</option>
-            </select>
+          <div class="form-inline">
+            <div class="form-row">
+              <label class="form-label">策略</label>
+              <select v-model="form.strategy">
+                <option value="trend">趋势突破 (N=1.5)</option>
+                <option value="pullback">回调买入 (N=2.0)</option>
+                <option value="bottom">底部右侧确认 (N=3.0)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label class="form-label">总资金 (万元)</label>
+              <input :value="capitalWan" @input="onCapitalChange" type="number" step="1" />
+            </div>
           </div>
 
-          <div class="form-row">
-            <label class="form-label">买入价</label>
-            <input v-model.number="form.buyPrice" type="number" placeholder="0.00" step="0.01" />
-          </div>
-
-          <div class="form-row">
-            <label class="form-label">目标价</label>
-            <input v-model.number="form.targetPrice" type="number" placeholder="0.00" step="0.01" />
-          </div>
-
-          <div class="form-row">
-            <label class="form-label">总资金 (万元)</label>
-            <input :value="capitalWan" @input="onCapitalChange" type="number" step="1" />
+          <div class="form-inline">
+            <div class="form-row">
+              <label class="form-label">买入价</label>
+              <input v-model.number="form.buyPrice" type="number" placeholder="0.00" step="0.01" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">目标价</label>
+              <input v-model.number="form.targetPrice" type="number" placeholder="0.00" step="0.01" />
+            </div>
           </div>
         </div>
 
@@ -303,10 +305,23 @@ onMounted(() => {
   align-items: start;
 }
 
+.position {
+  height: calc(100vh - 56px);
+}
+
 .form-grid {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.form-inline {
+  display: flex;
+  gap: 12px;
+}
+
+.form-inline .form-row {
+  flex: 1;
 }
 
 .form-row {

@@ -231,20 +231,55 @@ router.get('/api/market/breadth', async (ctx) => {
   const cached = getCached('breadth', BREADTH_CACHE_TTL)
   if (cached) { ctx.body = ok(cached); return }
 
+  // 方法1: 东方财富 ulist API（f104=涨,f105=跌,f106=平）
   try {
-    // 东方财富：1.000002=沪A, 0.399002=深A, 0.899050=北交所 → f104=涨,f105=跌,f106=平
     const url = 'https://push2.eastmoney.com/api/qt/ulist/get?fltt=1&invt=2&fields=f104,f105,f106&secids=1.000002,0.399002,0.899050&ut=8dec03ba335b81bf4ebdf7b29ec27d15&pn=1&np=1&dect=1&pz=20'
     const data = await fetchJSON(url)
     const diff = data?.data?.diff
     if (diff?.length) {
       let up = 0, down = 0, flat = 0
       for (const d of diff) { up += d.f104 || 0; down += d.f105 || 0; flat += d.f106 || 0 }
+      if (up || down || flat) {
+        const result = { up, down, flat }
+        ctx.body = ok(result)
+        setCache('breadth', result)
+        return
+      }
+    }
+  } catch (e) { /* 东方财富 ulist 不可用 */ }
+
+  // 方法2: 使用 clist API 统计全市场涨跌平家数
+  try {
+    const fs = 'm:0+t:6+f:!2,m:0+t:80+f:!2,m:1+t:2+f:!2,m:1+t:23+f:!2,m:0+t:81+f:!2'
+    const clistUrl = `https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6000&np=1&fltt=2&invt=2&fid=f3&po=1&fields=f3&fs=${fs}`
+    const data = await fetchJSON(clistUrl)
+    const diff = data?.data?.diff
+    if (diff?.length) {
+      let up = 0, down = 0, flat = 0
+      for (const s of diff) {
+        const chg = s.f3
+        if (chg > 0) up++
+        else if (chg < 0) down++
+        else flat++
+      }
       const result = { up, down, flat }
       ctx.body = ok(result)
       setCache('breadth', result)
       return
     }
-  } catch (e) { /* 东方财富 ulist 不可用 */ }
+  } catch (e) { /* clist 统计也不可用 */ }
+
+  // 方法3: 使用 JRJ 温度计接口的涨跌数据
+  try {
+    const market = await fetchJRJ('/quot-dc/zdt/v1/market')
+    const s = market.stock || {}
+    if (s.total) {
+      const result = { up: s.up || 0, down: s.down || 0, flat: s.flat || 0 }
+      ctx.body = ok(result)
+      setCache('breadth', result)
+      return
+    }
+  } catch (e) { /* JRJ 也不可用 */ }
 
   ctx.body = fail('breadth data unavailable')
 })
@@ -623,11 +658,11 @@ router.get('/api/stock/:code/intraday5d', async (ctx) => {
 router.get('/api/stock/:code/basic', async (ctx) => {
   try {
     const code = ctx.params.code
-    const url = `https://push2his.eastmoney.com/api/qt/stock/get?secid=${toSecid(code)}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f116,f117,f162,f167,f170,f171,f173,f184,f186,f187,f188,f190,f191,f192&fltt=2`
+    const url = `https://push2his.eastmoney.com/api/qt/stock/get?secid=${toSecid(code)}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f116,f117,f127,f128,f129,f162,f167,f170,f171,f173,f184,f186,f187,f188,f190,f191,f192&fltt=2`
     const data = await fetchJSON(url)
     const d = data.data || {}
     ctx.body = ok({
-      code, name: d.f58 || '', pe: d.f184, pb: d.f167,
+      code, name: d.f58 || '', industry: d.f127 || '', region: d.f128 || '', concept: d.f129 || '', pe: d.f184, pb: d.f167,
       totalMarketCap: d.f116, circulationMarketCap: d.f117, circulationShares: d.f162,
       roe: d.f190, grossMargin: d.f186, netMargin: d.f187,
       revenueGrowth: d.f188, profitGrowth: d.f191, debtRatio: d.f192,
@@ -1059,5 +1094,5 @@ registerAIJudgeRoutes(router)
 app.use(router.routes())
 app.use(router.allowedMethods())
 app.listen(PORT, () => {
-  console.log(`SmartStock API server running on http://localhost:${PORT}`)
+  console.log(`Ultimate Trading System API server running on http://localhost:${PORT}`)
 })

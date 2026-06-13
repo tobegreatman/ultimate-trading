@@ -7,7 +7,7 @@ import { calcVolatilityMeasure, detectDivergenceV2 } from './divergence.js'
  * 维度 2: 涨跌家数（市场广度 + 趋势）
  * 维度 3: RSI 状态（超买超卖 + 背离检测）
  * 维度 4: 融资余额（杠杆资金趋势 + 回归斜率）
- * 维度 5: 量价配合（OBV 趋势 + 背离）
+ * 维度 5: 量价配合（OBV 趋势 + 背离 + 近5日量能加权修正）
  * 维度 6: 北向资金（活跃度 + 成交额趋势方向）
  * 维度 7: 涨跌停（市场情绪 + 封板率）
  * 维度 8: 宏观因子（PMI/M1-M2剪刀差/CPI/GDP，低权重辅助）
@@ -499,14 +499,61 @@ function judgeVolumePrice(klines) {
   const obvUp = obvNorm > DEAD
   const obvDown = obvNorm < -DEAD
 
-  // 量化辅助：5 日均量 vs 20 日均量（量比）
+  // 量化辅助：近5日均量 vs 前15日均量（非重叠窗口，参照 judgeNorthbound 模式）
   const vols = klines.slice(-20).map(k => k.volume || 0)
-  const avgVol5 = vols.slice(-5).reduce((a, b) => a + b, 0) / 5
+  const volSlice5 = vols.slice(-5)
+  const volSlice15 = vols.slice(0, 15)
+  const sum5 = volSlice5.reduce((a, b) => a + b, 0)
+  const sum15 = volSlice15.reduce((a, b) => a + b, 0)
+  const avgVol5 = sum5 / 5
+  const avgVol15 = sum15 > 0 ? sum15 / volSlice15.length : 0
+  // 非重叠比率：近5日 / 前15日；avgVol15 为0时回退到重叠式计算
   const avgVol20 = vols.reduce((a, b) => a + b, 0) / 20
-  const volRatio = avgVol20 > 0 ? avgVol5 / avgVol20 : 1
-  const volPct = ((volRatio - 1) * 100).toFixed(0)
+  const volRatio = avgVol15 > 0 ? avgVol5 / avgVol15 : (avgVol20 > 0 ? avgVol5 / avgVol20 : 1)
+  const safeVolRatio = Number.isFinite(volRatio) && volRatio >= 0 ? volRatio : 1
+  const volPct = ((safeVolRatio - 1) * 100).toFixed(0)
   const amtLatest = klines[klines.length - 1].amount
   const amtInfo = amtLatest ? `今日成交${fmtAmt(amtLatest)}` : ''
+
+  // 近5日OBV斜率（趋势偏转检测）
+  const obvSlope5 = linearSlope(recentObv.slice(-5))
+  const obvNorm5 = obvAbs > 0 ? obvSlope5 / obvAbs : 0
+  const obv5Up = obvNorm5 > DEAD
+  const obv5Down = obvNorm5 < -DEAD
+
+  // ==================== 近期量能修正系数 ====================
+  // 1. 量能水平修正（基于近5日/前15日非重叠 volRatio）
+  let volFactor = 1.0
+  if (safeVolRatio >= 1.5) {
+    volFactor = lerp(safeVolRatio, 1.0, 1.5, 1.0, W_STRONG / W.volumePrice)
+  } else if (safeVolRatio >= 1.2) {
+    volFactor = lerp(safeVolRatio, 1.0, 1.2, 1.0, 1.2)
+  } else if (safeVolRatio <= 0.5) {
+    volFactor = lerp(safeVolRatio, 0.5, 1.0, 0.5, 1.0)
+  } else if (safeVolRatio <= 0.8) {
+    volFactor = lerp(safeVolRatio, 0.8, 1.0, 0.8, 1.0)
+  }
+
+  // 2. 趋势偏转修正（5日 vs 20日 OBV 斜率方向）
+  let deflectionFactor = 1.0
+  if (obvUp && obv5Down) {
+    deflectionFactor = 0.75   // 20日↑ 但近5日↓ → 趋势转弱
+  } else if (obvDown && obv5Up) {
+    deflectionFactor = 0.75   // 20日↓ 但近5日↑ → 趋势转弱
+  } else if (obvUp && obv5Up && obvNorm5 > obvNorm * 1.5) {
+    deflectionFactor = 1.15   // 近5日加速上行
+  } else if (obvDown && obv5Down && obvNorm5 < obvNorm * 1.5) {
+    deflectionFactor = 1.15   // 近5日加速下行
+  }
+
+  const recencyFactor = volFactor * deflectionFactor
+
+  // 近期修正描述后缀
+  const recencyHint = safeVolRatio >= 1.5 ? '（近5日显著放量，信号增强）'
+    : safeVolRatio >= 1.2 ? '（近5日温和放量）'
+    : safeVolRatio <= 0.5 ? '（近5日严重缩量，信号削弱）'
+    : safeVolRatio <= 0.8 ? '（近5日温和缩量）'
+    : ''
 
   // OBV 背离检测（v7.1 增强版）
   const div = detectDivergenceV2(recentCloses, recentObv)
@@ -519,30 +566,31 @@ function judgeVolumePrice(klines) {
   if (div && div.type === 'bullish') {
     const w = W_STRONG * div.confidence
     return mk('量价配合', `放量新低(${(div.confidence * 100).toFixed(0)}%)`, 'bull', w,
-      `价格走低但资金暗中买入，底部蓄力信号，置信度${(div.confidence * 100).toFixed(0)}%${volRatio > 1 ? `，近5日均量放大${volPct}%` : ''}`, 'bullish')
+      `价格走低但资金暗中买入，底部蓄力信号，置信度${(div.confidence * 100).toFixed(0)}%${safeVolRatio > 1 ? `，近5日均量放大${volPct}%` : ''}`, 'bullish')
   }
 
   if (priceUp && obvUp) {
-    const volHint = volRatio > 1.15 ? `近5日均量放大${volPct}%，资金持续进场` : '成交量稳步放大'
-    return mk('量价配合', '放量上涨', 'bull', W.volumePrice,
-      `量价齐升，${volHint}${amtInfo ? '，' + amtInfo : ''}`)
+    const volHint = safeVolRatio > 1.15 ? `近5日均量放大${volPct}%，资金持续进场` : '成交量稳步放大'
+    return mk('量价配合', '放量上涨', 'bull', +(W.volumePrice * recencyFactor).toFixed(2),
+      `量价齐升，${volHint}${amtInfo ? '，' + amtInfo : ''}${recencyHint}`)
   }
   if (priceDown && obvUp) {
-    return mk('量价配合', '缩量回调', 'bull', W.volumePrice * 0.6,
-      `回调缩量，资金流向仍为净流入，筹码锁定良好`)
+    return mk('量价配合', '缩量回调', 'bull', +(W.volumePrice * 0.6 * recencyFactor).toFixed(2),
+      `回调缩量，资金流向仍为净流入，筹码锁定良好${recencyHint}`)
   }
   if (priceUp && obvDown) {
-    return mk('量价配合', '缩量上涨', 'bear', W.volumePrice,
-      `上涨无量配合，近5日均量缩减${Math.abs(volPct)}%，虚涨需警惕`)
+    return mk('量价配合', '缩量上涨', 'bear', +(W.volumePrice * recencyFactor).toFixed(2),
+      `上涨无量配合，近5日均量缩减${Math.abs(volPct)}%，虚涨需警惕${recencyHint}`)
   }
   if (priceDown && obvDown) {
-    const volHint = volRatio > 1.1 ? `，近5日均量放大${volPct}%，抛压加重` : ''
-    return mk('量价配合', '放量下跌', 'bear', W.volumePrice,
-      `资金持续出逃，放量下挫${volHint}`)
+    const volHint = safeVolRatio > 1.1 ? `，近5日均量放大${volPct}%，抛压加重` : ''
+    return mk('量价配合', '放量下跌', 'bear', +(W.volumePrice * recencyFactor).toFixed(2),
+      `资金持续出逃，放量下挫${volHint}${recencyHint}`)
   }
 
   // 斜率不显著（死区内）
-  return mk('量价配合', '量能平稳', 'neutral', W.volumePrice, '近20日成交量变化不大，市场观望情绪浓厚')
+  return mk('量价配合', '量能平稳', 'neutral', +(W.volumePrice * recencyFactor).toFixed(2),
+    `近20日成交量变化不大，市场观望情绪浓厚${recencyHint}`)
 }
 
 // ==================== 波动率（ATR 状态 + 趋势） ====================
@@ -749,7 +797,7 @@ function synthMultiIndex(indices, judgeFn) {
       signal: r.signal.value,
       dir: r.signal.bull ? 'bull' : (r.signal.bear ? 'bear' : 'neutral')
     })),
-    hint: sig.dimension === '量价配合' ? '20日趋势' : null
+    hint: sig.dimension === '量价配合' ? '20日趋势+近5日修正' : null
   }
 }
 

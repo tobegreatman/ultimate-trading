@@ -429,7 +429,7 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 .detail-name {
@@ -449,7 +449,7 @@ onMounted(() => {
   display: inline-block;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
 }
 

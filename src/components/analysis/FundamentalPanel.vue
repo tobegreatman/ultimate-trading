@@ -6,7 +6,7 @@
       <div class="trend-indicators-row">
         <div class="trend-col">
           <div class="section">
-            <h4 class="section-title">估值区间</h4>
+            <h4 class="section-title">估值区间 <span class="section-hint">与自身历史比较</span></h4>
             <div class="valuation-bars">
               <div class="valuation-row">
                 <span class="val-label">PE</span>
@@ -39,7 +39,7 @@
           <h4 class="section-title">核心指标</h4>
           <div class="indicator-groups">
             <div class="indicator-group">
-              <h5>估值</h5>
+              <h5>估值 <span class="section-hint">与同行业比较</span></h5>
               <div class="indicator-cards">
                 <div class="ind-card">
                   <span class="ind-label">PE (TTM)</span>
@@ -432,6 +432,13 @@ onDeactivated(() => {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.section-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 6px;
 }
 
 /* 估值区间 */

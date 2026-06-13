@@ -252,6 +252,7 @@ export async function fetchStockBasicFallback(code) {
   return {
     code,
     name: f[1] || '',
+    industry: '',
     pe: +f[44] || null,
     pb: null,
     totalMarketCap: +f[46] || null,
