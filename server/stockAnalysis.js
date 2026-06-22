@@ -40,6 +40,12 @@ const NORTHBOUND_CACHE_TTL = 10 * 60 * 1000  // 10分钟缓存（日度数据更
 const MAIN_FORCE_CACHE_TTL = 5 * 60 * 1000  // 5分钟缓存（日度资金流更新较频）
 const INTRADAY_MF_CACHE_TTL = 3 * 60 * 1000  // 日内分时 3分钟缓存
 const SHAREHOLDER_CACHE_TTL = 60 * 60 * 1000  // 60分钟缓存（季度数据更新慢）
+const BILLBOARD_CACHE_TTL = 30 * 60 * 1000  // 30分钟缓存（龙虎榜日度更新）
+const HOLDER_INCREASE_CACHE_TTL = 60 * 60 * 1000  // 60分钟缓存（公告驱动，更新慢）
+const PLEDGE_CACHE_TTL = 30 * 60 * 1000  // 30分钟缓存（质押日频更新）
+const GOODWILL_CACHE_TTL = 6 * 60 * 60 * 1000  // 6小时缓存（商誉季频，随财报更新）
+const SECTOR_TABLE_CACHE_TTL = 5 * 60 * 1000  // 板块资金表 5 分钟（全市场共用，单条缓存）
+const SECTOR_CODE_CACHE_TTL = 30 * 60 * 1000  // 个股→BK 代码 30 分钟（随基本面更新）
 const CACHE_MAX_SIZE = 200  // 每个缓存最多 200 条，防止内存泄漏
 
 const fundamentalCache = new Map()
@@ -49,6 +55,13 @@ const northboundCache = new Map()
 const mainForceCache = new Map()
 const intradayMfCache = new Map()
 const shareholderCache = new Map()
+const billboardCache = new Map()
+const holderIncreaseCache = new Map()
+const pledgeCache = new Map()
+const goodwillCache = new Map()
+const sectorCodeCache = new Map()  // code → { sectorCode, industry, ts }
+// 板块资金表是全市场共用的同一张 128 行业表，用单条缓存（非 per-code），所有个股复用
+let sectorTableCache = { table: null, ts: 0 }
 
 // 通用缓存写入：淘汰最旧条目，更新时移动到末尾
 function cacheSet(cache, key, value) {
@@ -264,10 +277,10 @@ async function getFundamentalData(code) {
   }
 
   // 从 datacenter API 补充当前 PE/PB/市值/行业
-  let pe = null, pb = null, totalMarketCap = null, industry = ''
+  let pe = null, pb = null, totalMarketCap = null, industry = '', sectorCode = ''
   try {
     const suffix = code.startsWith('6') ? 'SH' : 'SZ'
-    const valUrl = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_VALUEANALYSIS_DET&columns=SECUCODE,PE_TTM,PB_MRQ,TOTAL_MARKET_CAP,BOARD_NAME&source=WEB&client=WEB&sortColumns=TRADE_DATE&sortTypes=-1&pageSize=1&pageNumber=1&filter=(SECUCODE="${code}.${suffix}")`
+    const valUrl = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_VALUEANALYSIS_DET&columns=SECUCODE,PE_TTM,PB_MRQ,TOTAL_MARKET_CAP,BOARD_NAME,ORIG_BOARD_CODE&source=WEB&client=WEB&sortColumns=TRADE_DATE&sortTypes=-1&pageSize=1&pageNumber=1&filter=(SECUCODE="${code}.${suffix}")`
     const valData = await fetchJSON(valUrl)
     const vd = valData.result?.data?.[0]
     if (vd) {
@@ -275,6 +288,8 @@ async function getFundamentalData(code) {
       pb = vd.PB_MRQ ?? null
       totalMarketCap = vd.TOTAL_MARKET_CAP ?? null
       industry = vd.BOARD_NAME || ''
+      // ORIG_BOARD_CODE(如 1036) → BK 代码(BK1036)，供板块资金共振精确匹配（方案B，零名称歧义）
+      sectorCode = vd.ORIG_BOARD_CODE ? 'BK' + vd.ORIG_BOARD_CODE : ''
     }
   } catch (e) {
     console.error('valuation fetch failed for', code, e.message)
@@ -286,6 +301,7 @@ async function getFundamentalData(code) {
     if (pb != null) items[0].pb = pb
     if (totalMarketCap != null) items[0].totalMarketCap = totalMarketCap
     items[0].industry = industry
+    if (sectorCode) items[0].sectorCode = sectorCode
   }
 
   // 计算历史每期真实 PE/PB：用日 K 线精确匹配报告期对应时点的收盘价
@@ -406,7 +422,15 @@ async function getCapitalFlowData(code) {
   const recentAvgClose = recent5.reduce((s, k) => s + k.close, 0) / 5
   const prevKlines15 = klines.slice(-20, -5)
   const prevAvgClose = prevKlines15.length > 0 ? prevKlines15.reduce((s, k) => s + k.close, 0) / prevKlines15.length : recentAvgClose
-  const trendUp = recentAvgClose > prevAvgClose
+  let trendUp = recentAvgClose > prevAvgClose
+
+  // 拐点加速：近3日均价突破近5日均价时，趋势方向取近3日（对拐点更敏感）
+  if (klines.length >= 5) {
+    const recent3 = klines.slice(-3)
+    const avgClose3 = recent3.reduce((s, k) => s + k.close, 0) / 3
+    const trend3Up = avgClose3 > recentAvgClose  // 3日均价 vs 5日均价
+    if (trend3Up !== trendUp) trendUp = trend3Up  // 3日已拐头，覆盖5日趋势
+  }
 
   let priceVolumeSignal = '量价平稳'
   let priceVolumeDir = 'neutral'
@@ -901,6 +925,472 @@ async function handleShareholder(ctx) {
   }
 }
 
+// ==================== 龙虎榜数据（机构/游资席位 + 净额） ====================
+
+// 解析东方财富龙虎榜 EXPLAIN 文本：提取机构买卖家数、游资/主力标记
+// 形如 "1家机构买入，成功率41.12%" / "2家机构卖出" / "实力游资买入" / "主力做T" / "浙江资金买入" / "买一主买"
+function parseBillboardExplain(explain) {
+  const text = explain || ''
+  const buyM = text.match(/(\d+)家机构买入/)
+  const sellM = text.match(/(\d+)家机构卖出/)
+  const instBuy = buyM ? +buyM[1] : 0
+  const instSell = sellM ? +sellM[1] : 0
+  return {
+    instBuy,
+    instSell,
+    isInst: instBuy > 0 || instSell > 0,
+    isHotMoney: /实力游资|资金买入/.test(text),  // 实力游资、地域资金（浙江资金等）
+    isMainForce: /主力做T/.test(text),
+  }
+}
+
+// 距今天数（自然日），dateStr: "YYYY-MM-DD"
+function daysBetween(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00')
+  if (isNaN(d.getTime())) return 9999
+  const today = new Date()
+  d.setHours(0, 0, 0, 0)
+  today.setHours(0, 0, 0, 0)
+  return Math.round((today - d) / 86400000)
+}
+
+async function getBillboardData(code) {
+  const url = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_DAILYBILLBOARD_DETAILS&columns=ALL&source=WEB&client=WEB&sortColumns=TRADE_DATE&sortTypes=-1&pageSize=50&pageNumber=1&filter=(SECURITY_CODE="${code}")`
+  const data = await fetchJSON(url)
+
+  const raw = data.result?.data || []
+  if (!raw.length) return { available: false, latest: null, recent: [], summary: null }
+
+  // 按 TRADE_DATE 去重（同一日可能因多个上榜条件返回多条，取首条即最新口径）
+  const byDate = new Map()
+  for (const d of raw) {
+    const date = (d.TRADE_DATE || '').slice(0, 10)
+    if (!date || byDate.has(date)) continue
+    byDate.set(date, d)
+  }
+
+  const items = [...byDate.values()].map(d => {
+    const date = (d.TRADE_DATE || '').slice(0, 10)
+    const ei = parseBillboardExplain(d.EXPLAIN)
+    return {
+      date,
+      daysAgo: daysBetween(date),
+      netAmtYi: +((d.BILLBOARD_NET_AMT || 0) / 1e8).toFixed(2),       // 净额(亿)
+      buyAmtYi: +((d.BILLBOARD_BUY_AMT || 0) / 1e8).toFixed(2),
+      sellAmtYi: +((d.BILLBOARD_SELL_AMT || 0) / 1e8).toFixed(2),
+      changeRate: d.CHANGE_RATE,
+      explain: d.EXPLAIN || '',
+      explanation: d.EXPLANATION || '',
+      ...ei,
+    }
+  })
+
+  const latest = items[0]
+  // 近期窗口：距今 <= 10 自然日（覆盖约 5 个交易日 + 假期），龙虎榜是事件信号，过久不计入
+  const RECENT_DAYS = 10
+  const recent = items.filter(it => it.daysAgo >= 0 && it.daysAgo <= RECENT_DAYS)
+
+  let summary = null
+  if (recent.length) {
+    const instBuyTotal = recent.reduce((s, it) => s + it.instBuy, 0)
+    const instSellTotal = recent.reduce((s, it) => s + it.instSell, 0)
+    summary = {
+      recentCount: recent.length,
+      daysAgo: latest.daysAgo,
+      netSumYi: +recent.reduce((s, it) => s + it.netAmtYi, 0).toFixed(2),
+      instBuyTotal,
+      instSellTotal,
+      instNet: instBuyTotal - instSellTotal,
+      hasInst: instBuyTotal > 0 || instSellTotal > 0,
+      hasHotMoney: recent.some(it => it.isHotMoney),
+    }
+  }
+
+  return { available: true, latest, recent, summary }
+}
+
+async function handleBillboard(ctx) {
+  try {
+    const code = validateCode(ctx)
+    if (!code) return
+
+    const cached = billboardCache.get(code)
+    if (cached && Date.now() - cached.ts < BILLBOARD_CACHE_TTL) {
+      cacheTouch(billboardCache, code)
+      ctx.body = ok(cached.data)
+      return
+    }
+
+    const result = await getBillboardData(code)
+    cacheSet(billboardCache, code, { data: result, ts: Date.now() })
+    ctx.body = ok(result)
+  } catch (e) {
+    console.error('billboard error:', e.message)
+    ctx.body = fail(e.message)
+  }
+}
+
+// ==================== 股东增减持（董监高/大股东口径） ====================
+
+// 股东身份分类：API 的 HOLDER_NAME 是自由文本，无 holder-type 字段。
+// 靠关键词 + 持股比例推断"重要内部人"，剔除金融产品/激励计划噪声。
+//   institution —— 明确排除：员工持股/股权激励/私募/基金/信托/资管/理财/社保/QFII/保险/年金等
+//   insider     —— 名称含董监高/控股股东/实控人头衔
+//   major_holder—— 无头衔但持股 ≥ 5%（大股东，受减持披露约束，视为重要内部人）
+//   other       —— 普通小股东，不计入
+const NON_INSIDER_KW = [
+  '员工持股', '股权激励', '限制性股票', '私募', '基金', '信托', '资管', '理财',
+  '集合计划', '资产管理', '社保', 'QFII', '保险', '年金', '专户', '银行',
+]
+const INSIDER_KW = [
+  '控股股东', '实际控制', '实控', '董事长', '总裁', '总经理', '副总经理',
+  '首席执行官', '首席', '董事', '监事', '高管', '董秘', '财务总监',
+]
+function classifyHolder(name, holdRatio) {
+  if (!name) return 'other'
+  if (NON_INSIDER_KW.some(kw => name.includes(kw))) return 'institution'
+  if (INSIDER_KW.some(kw => name.includes(kw))) return 'insider'
+  // 无头衔自然人：持股 ≥ 5% 视为大股东（减持披露口径）
+  if (holdRatio != null && holdRatio >= 5) return 'major_holder'
+  return 'other'
+}
+
+/**
+ * 获取个股股东增减持，过滤出董监高/大股东口径。
+ * 数据源：东方财富 RPT_SHARE_HOLDER_INCREASE（含全部股东，需自行剔除金融产品）
+ * 返回 { available, latest, recent, summary }：
+ *   recent  —— 近 RECENT_DAYS 天内的重要内部人交易（已剔除 institution/other）
+ *   summary —— 方向汇总：netChangeRate(正=净增持)、是否含控股股东/实控人减持等
+ */
+async function getHolderIncreaseData(code) {
+  const url = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_SHARE_HOLDER_INCREASE&columns=ALL&source=WEB&client=WEB&sortColumns=END_DATE,EITIME&sortTypes=-1,-1&pageSize=50&pageNumber=1&filter=(SECURITY_CODE="${code}")`
+  const data = await fetchJSON(url)
+
+  const raw = data.result?.data || []
+  if (!raw.length) return { available: false, latest: null, recent: [], summary: null }
+
+  const items = raw.map(d => {
+    const dateStr = (d.NOTICE_DATE || d.END_DATE || d.TRADE_DATE || '').slice(0, 10)
+    const holdRatio = d.HOLD_RATIO != null ? +d.HOLD_RATIO : null
+    return {
+      date: dateStr,
+      daysAgo: daysBetween(dateStr),
+      direction: d.DIRECTION || '',                              // 增持 / 减持
+      holderName: d.HOLDER_NAME || '',
+      holderType: classifyHolder(d.HOLDER_NAME, holdRatio),      // insider / major_holder / institution / other
+      changeNumWan: +d.CHANGE_NUM || 0,                          // 变动股数（万股）
+      signedNum: +(d.CHANGE_NUM_SYMBOL || 0),                    // 带符号（减持为负）
+      changeRatePct: +d.CHANGE_RATE || 0,                        // 变动占流通比 %
+      holdRatio,                                                 // 持股占总股本比 %
+      afterHoldRatio: d.AFTER_CHANGE_RATE != null ? +d.AFTER_CHANGE_RATE : null,
+      market: d.MARKET || '',                                    // 二级市场 / 大宗交易
+      price: d.TRADE_AVERAGE_PRICE != null ? +d.TRADE_AVERAGE_PRICE : null,
+    }
+  })
+
+  // 仅保留重要内部人，剔除金融产品与普通小股东
+  const insiderItems = items.filter(it => it.holderType === 'insider' || it.holderType === 'major_holder')
+  const latest = insiderItems[0] || null
+
+  // 近 90 天窗口（≈一个集中竞价减持实施周期；实测 61-180 天为已完成计划的尾部噪声，剔除）
+  const RECENT_DAYS = 90
+  // 控股股东/实控人减持放宽到 180 天：结构性看空信号，时效长于普通资金流（一个完整减持计划周期）
+  const CTRL_REDUCE_DAYS = 180
+  const recent = insiderItems.filter(it => it.daysAgo >= 0 && it.daysAgo <= RECENT_DAYS)
+
+  // 方向汇总（幅度仅基于 90 天 recent）：DIRECTION 为权威方向，幅度取 CHANGE_RATE 绝对值。
+  // 茅台等回购股会出现"增持 + 负变动率"的被动增持，按方向归桶避免符号错乱。
+  let incRate = 0, decRate = 0, netNumWan = 0
+  let incCount = 0, decCount = 0
+  const holderSet = new Set()
+  for (const it of recent) {
+    holderSet.add(it.holderName)
+    netNumWan += it.signedNum
+    if (it.direction === '增持') { incRate += Math.abs(it.changeRatePct); incCount++ }
+    else if (it.direction === '减持') { decRate += Math.abs(it.changeRatePct); decCount++ }
+  }
+
+  // 控股股东/实控人减持：180 天内即视为结构性看空（名称命中，或持股 ≥ 10%），取最近一次距今天数
+  let hasControllingReduce = false
+  let controllingReduceDaysAgo = null
+  for (const it of insiderItems) {
+    if (it.daysAgo < 0 || it.daysAgo > CTRL_REDUCE_DAYS) continue
+    if (it.direction !== '减持') continue
+    if (/控股股东|实际控制|实控/.test(it.holderName) || (it.holdRatio != null && it.holdRatio >= 10)) {
+      hasControllingReduce = true
+      if (controllingReduceDaysAgo == null || it.daysAgo < controllingReduceDaysAgo) {
+        controllingReduceDaysAgo = it.daysAgo
+      }
+    }
+  }
+
+  // summary 始终返回：recentCount=0 表示数据可用但近期窗口内无内部人交易，区别于 available:false（fetch 失败）
+  const summary = {
+    recentCount: recent.length,
+    daysAgo: latest?.daysAgo,
+    netChangeRate: +(incRate - decRate).toFixed(3),            // 正=净增持，负=净减持（占流通比%）
+    netChangeNumWan: +netNumWan.toFixed(2),
+    increaseCount: incCount,
+    reduceCount: decCount,
+    hasControllingReduce,
+    controllingReduceDaysAgo,                                  // 控股股东/实控人减持最近距今天数（≤180）
+    holderCount: holderSet.size,
+  }
+
+  return { available: true, latest, recent, summary }
+}
+
+async function handleHolderIncrease(ctx) {
+  try {
+    const code = validateCode(ctx)
+    if (!code) return
+
+    const cached = holderIncreaseCache.get(code)
+    if (cached && Date.now() - cached.ts < HOLDER_INCREASE_CACHE_TTL) {
+      cacheTouch(holderIncreaseCache, code)
+      ctx.body = ok(cached.data)
+      return
+    }
+
+    const result = await getHolderIncreaseData(code)
+    cacheSet(holderIncreaseCache, code, { data: result, ts: Date.now() })
+    ctx.body = ok(result)
+  } catch (e) {
+    console.error('holder-increase error:', e.message)
+    ctx.body = fail(e.message)
+  }
+}
+
+// ==================== 股权质押数据（CSDC 日频） ====================
+
+/**
+ * 获取个股股权质押数据（中国结算口径，日频）
+ * 数据源：东方财富 datacenter RPT_CSDC_LIST_NEWEST
+ * PLEDGE_RATIO 为质押比例（百分点 0-100）。实测高质押 TOP5 全是 ST 股 → 天然爆雷信号。
+ * 接口成功但无记录 → 该股无质押，视为 0%（安全），区别于接口失败。
+ */
+async function getPledgeData(code) {
+  const url = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_CSDC_LIST_NEWEST&columns=SECURITY_CODE,SECURITY_NAME_ABBR,TRADE_DATE,PLEDGE_RATIO,PLEDGE_DEAL_NUM,PLEDGE_MARKET_CAP&source=WEB&client=WEB&sortColumns=TRADE_DATE&sortTypes=-1&pageSize=1&pageNumber=1&filter=(SECURITY_CODE="${code}")`
+  const data = await fetchJSON(url)
+  const raw = data.result?.data || []
+  if (!raw.length) {
+    // 接口成功但无记录 → 无质押，0%（安全）；与接口失败（throw → fail）区分
+    return { available: true, latest: { pledgeRatio: 0, pledgeDealNum: 0, pledgeMarketCap: 0, tradeDate: '', noRecord: true } }
+  }
+  const d = raw[0]
+  return {
+    available: true,
+    latest: {
+      pledgeRatio: d.PLEDGE_RATIO ?? 0,           // 百分点 0-100
+      pledgeDealNum: d.PLEDGE_DEAL_NUM ?? 0,      // 质押笔数
+      pledgeMarketCap: d.PLEDGE_MARKET_CAP ?? 0,  // 质押市值（万元）
+      tradeDate: d.TRADE_DATE?.slice(0, 10) || '',
+      noRecord: false,
+    }
+  }
+}
+
+async function handlePledge(ctx) {
+  try {
+    const code = validateCode(ctx)
+    if (!code) return
+
+    const cached = pledgeCache.get(code)
+    if (cached && Date.now() - cached.ts < PLEDGE_CACHE_TTL) {
+      cacheTouch(pledgeCache, code)
+      ctx.body = ok(cached.data)
+      return
+    }
+
+    const result = await getPledgeData(code)
+    cacheSet(pledgeCache, code, { data: result, ts: Date.now() })
+    ctx.body = ok(result)
+  } catch (e) {
+    console.error('pledge error:', e.message)
+    ctx.body = fail(e.message)
+  }
+}
+
+// ==================== 商誉数据（季频，随财报更新） ====================
+
+/**
+ * 获取个股商誉数据（商誉/归母净资产比）
+ * 数据源：东方财富 datacenter RPT_GOODWILL_STOCKDETAILS
+ * SUMSHEQUITY_RATIO = 商誉/归母净资产（小数，0.0139=1.39%）。字段缺失时用 GOODWILL/SUMSHEQUITY 兜底计算。
+ * 无记录 → 无商誉 → 0%（安全），区别于接口失败。
+ */
+async function getGoodwillData(code) {
+  const url = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_GOODWILL_STOCKDETAILS&columns=SECURITY_CODE,SECURITY_NAME_ABBR,REPORT_DATE,GOODWILL,SUMSHEQUITY,SUMSHEQUITY_RATIO&source=WEB&client=WEB&sortColumns=REPORT_DATE&sortTypes=-1&pageSize=1&pageNumber=1&filter=(SECURITY_CODE="${code}")`
+  const data = await fetchJSON(url)
+  const raw = data.result?.data || []
+  if (!raw.length) {
+    return { available: true, latest: { goodwillRatio: 0, goodwill: 0, netAsset: 0, reportDate: '', noRecord: true } }
+  }
+  const d = raw[0]
+  const netAsset = d.SUMSHEQUITY ?? 0
+  // SUMSHEQUITY_RATIO 缺失时用绝对值兜底
+  const goodwillRatio = d.SUMSHEQUITY_RATIO != null
+    ? d.SUMSHEQUITY_RATIO
+    : (netAsset > 0 ? (d.GOODWILL ?? 0) / netAsset : 0)
+  return {
+    available: true,
+    latest: {
+      goodwillRatio,
+      goodwill: d.GOODWILL ?? 0,        // 商誉（元）
+      netAsset,                          // 归母净资产（元）
+      reportDate: d.REPORT_DATE?.slice(0, 10) || '',
+      noRecord: false,
+    }
+  }
+}
+
+async function handleGoodwill(ctx) {
+  try {
+    const code = validateCode(ctx)
+    if (!code) return
+
+    const cached = goodwillCache.get(code)
+    if (cached && Date.now() - cached.ts < GOODWILL_CACHE_TTL) {
+      cacheTouch(goodwillCache, code)
+      ctx.body = ok(cached.data)
+      return
+    }
+
+    const result = await getGoodwillData(code)
+    cacheSet(goodwillCache, code, { data: result, ts: Date.now() })
+    ctx.body = ok(result)
+  } catch (e) {
+    console.error('goodwill error:', e.message)
+    ctx.body = fail(e.message)
+  }
+}
+
+// ==================== 板块资金（个股所属行业的主力资金，用于资金面共振） ====================
+
+// 安全数值化：东财字段可能为 null / 字符串
+const num = v => (typeof v === 'number' && isFinite(v)) ? v : null
+
+// 个股 → 所属行业 BK 代码（方案 B：直接取东财估值接口的 ORIG_BOARD_CODE，零名称歧义）
+async function resolveSectorCode(code) {
+  const cached = sectorCodeCache.get(code)
+  if (cached && Date.now() - cached.ts < SECTOR_CODE_CACHE_TTL) {
+    cacheTouch(sectorCodeCache, code)
+    return cached
+  }
+  const suffix = code.startsWith('6') ? 'SH' : 'SZ'
+  const url = `https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_VALUEANALYSIS_DET&columns=SECUCODE,BOARD_NAME,ORIG_BOARD_CODE&source=WEB&client=WEB&sortColumns=TRADE_DATE&sortTypes=-1&pageSize=1&pageNumber=1&filter=(SECUCODE="${code}.${suffix}")`
+  const data = await fetchJSON(url)
+  const vd = data?.result?.data?.[0]
+  const result = {
+    sectorCode: vd?.ORIG_BOARD_CODE ? 'BK' + vd.ORIG_BOARD_CODE : '',
+    industry: vd?.BOARD_NAME || '',
+    ts: Date.now()
+  }
+  cacheSet(sectorCodeCache, code, result)
+  return result
+}
+
+// 全市场行业板块资金表（128 个行业，全市场共用，单条缓存）
+// 主源 push2/clist（四档拆分 + 占比 + 5/10日趋势），多节点轮试；兜底 emdatah5（仅 f62）
+async function getSectorCapitalTable() {
+  if (sectorTableCache.table && Date.now() - sectorTableCache.ts < SECTOR_TABLE_CACHE_TTL) {
+    return sectorTableCache.table
+  }
+
+  const fields = 'f12,f14,f3,f6,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f204,f205'
+  const nodes = ['push2', '1.push2', '33.push2', '43.push2']
+  let diff = null
+
+  for (const node of nodes) {
+    try {
+      const url = `https://${node}.eastmoney.com/api/qt/clist/get?fid=f62&po=1&pz=128&pn=1&np=1&fltt=2&invt=2&ut=8dec03ba335b81bf4ebdf7b29ec27d15&fs=m%3A90+s%3A4&fields=${fields}`
+      const data = await fetchJSON(url)
+      if (data?.data?.diff?.length) { diff = data.data.diff; break }
+    } catch (_) { /* 轮试下一节点 */ }
+  }
+
+  // 兜底：emdatah5 资金流向（push2 不可达时）。注意 emdatah5 用 m:90+t:2 分类，
+  // 粒度与 push2 的 s:4 不完全一致（BK1036 半导体被拆为数字芯片设计/半导体设备），
+  // 故兜底仅对两源共有的板块（BK0478 有色金属/BK1033 电池 等，编码同源）有效；
+  // 不共有的板块（如 BK1036）查表落空 → available:false → 共振优雅降级为中性。
+  // 注：emdatah5 响应结构是 data.diff（非 result.data），且 f204/f205 为领涨股名/代码（非5日主力），弃用。
+  if (!diff) {
+    try {
+      // 分页获取全部2级行业板块（约500个），确保4级行业代码也能匹配
+      const allDiff = []
+      for (let pn = 1; pn <= 10; pn++) {
+        const url = `https://emdatah5.eastmoney.com/dc/ZJLX/getZDYLBData?fields=f3,f6,f12,f14,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87&pn=${pn}&pz=100&fid=f62&po=1&fs=m%3A90%2Bt%3A2&ut=`
+        const data = await fetchJSON(url)
+        const emDiff = data?.data?.diff || null
+        if (!emDiff?.length) break
+        allDiff.push(...emDiff)
+        if (emDiff.length < 100) break  // 最后一页
+      }
+      if (allDiff.length) {
+        const table = {}
+        for (const it of allDiff) {
+          if (!it.f12) continue
+          table[it.f12] = {
+            code: it.f12, name: it.f14, changePct: num(it.f3),
+            mainNetInflow: num(it.f62), mainNetPct: num(it.f184),
+            superLarge: num(it.f66), superLargePct: num(it.f69),
+            large: num(it.f72), largePct: num(it.f75),
+            medium: num(it.f78), mediumPct: num(it.f81),
+            small: num(it.f84), smallPct: num(it.f87),
+            main5d: null, main10d: null, _source: 'emdatah5'
+          }
+        }
+        sectorTableCache = { table, ts: Date.now() }
+        return table
+      }
+    } catch (_) { /* 全部失败 */ }
+    return null
+  }
+
+  const table = {}
+  for (const it of diff) {
+    if (!it.f12) continue
+    table[it.f12] = {
+      code: it.f12,
+      name: it.f14,
+      changePct: num(it.f3),
+      mainNetInflow: num(it.f62),     // 主力净流入额（元）—— 共振主用方向
+      mainNetPct: num(it.f184),       // 主力净占比（%）—— 共振主用强度（与个股 mainNetPct 同口径）
+      superLarge: num(it.f66), superLargePct: num(it.f69),
+      large: num(it.f72), largePct: num(it.f75),
+      medium: num(it.f78), mediumPct: num(it.f81),
+      small: num(it.f84), smallPct: num(it.f87),
+      main5d: num(it.f204),            // 5日主力净流入
+      main10d: num(it.f205)            // 10日主力净流入
+    }
+  }
+  sectorTableCache = { table, ts: Date.now() }
+  return table
+}
+
+// 个股 → 其所属板块的资金摘要（共振输入）
+async function getSectorCapitalData(code) {
+  const { sectorCode, industry } = await resolveSectorCode(code)
+  if (!sectorCode) return { available: false, sector: null, industry }
+  const table = await getSectorCapitalTable()
+  if (!table) return { available: false, sector: null, industry, sectorCode }
+  const sec = table[sectorCode]
+  if (!sec) return { available: false, sector: null, industry, sectorCode }
+  return { available: true, sector: sec, industry, sectorCode }
+}
+
+async function handleSectorCapital(ctx) {
+  try {
+    const code = validateCode(ctx)
+    if (!code) return
+    const result = await getSectorCapitalData(code)
+    ctx.body = ok(result)
+  } catch (e) {
+    console.error('sector-capital error:', e.message)
+    ctx.body = fail(e.message)
+  }
+}
+
 // ==================== 基准指数 K 线（用于 Beta 计算） ====================
 const benchmarkCache = new Map()
 const BENCHMARK_CACHE_TTL = 30 * 60 * 1000
@@ -913,15 +1403,32 @@ async function handleBenchmarkKline(ctx) {
   if (cached) { ctx.body = ok(cached); return }
 
   try {
-    const secid = '1.000300' // 沪深 300
-    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&end=20500101&lmt=${lmt}`
-    const data = await fetchJSON(url)
-    const rawKlines = data.data?.klines || []
-    const klines = rawKlines.map(s => {
-      const p = s.split(',')
-      return { date: p[0], open: +p[1], close: +p[2], high: +p[3], low: +p[4], volume: +p[5], amount: +p[6] }
-    })
-    const result = { klines, source: 'hs300' }
+    let klines = []
+    let source = 'hs300'
+    // 主源：东方财富 push2his（沪深300）
+    try {
+      const secid = '1.000300' // 沪深 300
+      const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&end=20500101&lmt=${lmt}`
+      const data = await fetchJSON(url)
+      const rawKlines = data.data?.klines || []
+      klines = rawKlines.map(s => {
+        const p = s.split(',')
+        return { date: p[0], open: +p[1], close: +p[2], high: +p[3], low: +p[4], volume: +p[5], amount: +p[6] }
+      })
+    } catch (e) {
+      console.warn('benchmark push2his failed, fallback tencent:', e.message)
+    }
+    // 备用源：腾讯（沪深300 sh000300），push2his 不可达时兜底
+    if (!klines.length) {
+      const tcType = klt === 102 ? 'week' : klt === 103 ? 'month' : 'day'
+      const tcUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh000300,${tcType},,,${lmt},`
+      const tcData = await fetchJSON(tcUrl)
+      const dayArr = tcData?.data?.sh000300?.[tcType] || tcData?.data?.sh000300?.day || []
+      klines = dayArr.map(s => ({ date: s[0], open: +s[1], close: +s[2], high: +s[3], low: +s[4], volume: 0, amount: +s[5] }))
+      source = 'hs300_tencent'
+    }
+    if (!klines.length) { ctx.body = fail('基准K线获取失败（主备源均不可用）'); return }
+    const result = { klines, source }
     benchmarkCache.set(cacheKey, result)
     ctx.body = ok(result)
   } catch (e) {
@@ -936,6 +1443,11 @@ export function registerStockAnalysisRoutes(router) {
   router.get('/api/stock-analysis/northbound', handleNorthbound)
   router.get('/api/stock-analysis/margin', handleMargin)
   router.get('/api/stock-analysis/main-force-flow', handleMainForceFlow)
+  router.get('/api/stock-analysis/sector-capital', handleSectorCapital)
   router.get('/api/stock-analysis/shareholder', handleShareholder)
+  router.get('/api/stock-analysis/billboard', handleBillboard)
+  router.get('/api/stock-analysis/holder-increase', handleHolderIncrease)
+  router.get('/api/stock-analysis/pledge', handlePledge)
+  router.get('/api/stock-analysis/goodwill', handleGoodwill)
   router.get('/api/stock-analysis/benchmark-kline', handleBenchmarkKline)
 }

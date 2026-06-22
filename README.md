@@ -1,290 +1,118 @@
 # Ultimate Trading System 智能股票交易辅助系统
 
-面向 A 股个人投资者的盘中实时交易辅助工具。将规则化交易体系转化为可交互的 Web 应用，作为「纪律执行器」帮助用户完成：**判断大盘环境 → 策略选股 → 仓位计算 → 交易记录 → 复盘分析**的完整闭环。
+面向 A 股个人投资者的盘中实时交易辅助工具。把规则化交易体系做成可交互 Web 应用，作为「纪律执行器」串起 **判断大盘 → 策略选股 → 仓位计算 → 交易记录 → 复盘** 的完整闭环。
 
-## 功能概览
+## 功能模块
 
-| 页面 | 功能 |
+| 模块 | 能力 |
 |------|------|
-| 大盘状态 | 九维判据自动判定市场牛熊（含宏观因子），多指数综合 + 增强背离检测 + 涨跌停精细化 + 加权评分 + 连续确认状态惯性 + 行业资金流向 & RS 轮动 + 策略选股建议 + 长窗口速判 + 交易前检查清单 |
-| 股票池 | 搜索添加自选股，实时行情自动刷新，6 周期 K 线图，分时走势，基本面数据 |
-| 个股分析 | 综合评分（技术面40/基本面42/资金面29 三维度加权）+ 技术指标信号 + 估值分位 + 财务趋势 + 主力资金 + 北向资金 + 融资融券 + 股东户数筹码趋势 |
-| 选股筛选 | 四层漏斗（排雷→基本面→景气度→技术信号），AI 自然语言选股（主用）+ 结构化选股 API（回退），支持 RS 行业过滤 |
-| 仓位计算 | ATR 动态止损/仓位/盈亏比计算，持仓管理，行业集中度监控 |
-| 交易日志 | 交易全生命周期记录，平仓复盘评分，绩效统计，违规分析 |
-| 策略速查 | 10 章节交易规则参考手册，随时查阅 |
+| **大盘状态** | 多维加权牛熊判定（MACD/涨跌家数/RSI/融资/量价/北向/涨跌停/宏观因子）+ 状态惯性确认 + 行业资金流向 & 板块 RS 轮动 + 宏观因子卡片 + 策略选股建议 + 交易前检查清单 |
+| **股票池** | 搜索添加自选股，实时行情自动刷新，6 周期 K 线，分时走势，基本面 |
+| **个股分析** | 四维度综合评分（技术/基本面/资金/风险）+ 技术指标信号 + 估值分位 + 财务趋势 + 资金面（主力/北向/融资融券/筹码/龙虎榜/增减持）+ AI 综合判断 |
+| **选股筛选** | 四层漏斗（排雷→基本面→景气度→技术信号），AI 自然语言选股为主、结构化 API 回退，支持 RS 行业过滤 |
+| **仓位计算** | ATR 动态止损/仓位/盈亏比，持仓管理，行业集中度监控 |
+| **交易日志** | 交易全生命周期记录，平仓复盘评分，绩效统计，违规分析 |
+| **策略速查** | 交易规则参考手册，随时查阅 |
 
 ## 技术栈
 
-- **前端**: Vue 3.5 + Vite 6 + Vue Router 4 + Pinia 2 (Composition API)
-- **后端**: Koa 2 + @koa/router + koa-bodyparser (纯 API 代理层，无数据库)
-- **数据源**: 东方财富公开 API（主用）+ macroview.club（社融）+ 证券时报/腾讯/新浪备用（通过后端代理避免 CORS）
-- **持久化**: localStorage（用户数据）+ 服务端文件（板块 RS 历史快照）
+- **前端**：Vue 3.5 + Vite 6 + Vue Router 4 + Pinia 2（Composition API）+ ECharts 6（图表）
+- **后端**：Koa 2 + @koa/router + @koa/cors + koa-bodyparser + dotenv（纯 API 代理层，无数据库）
+- **AI**：OpenAI SDK（个股综合判断，SSE 流式）
+- **数据源**：东方财富公开 API（主用）+ macroview.club（社融）+ 腾讯/新浪/证券时报（备用），统一经后端代理规避 CORS
+- **持久化**：localStorage（用户数据）+ 服务端文件（板块 RS 历史快照 `rs_history.json`）
 
 ## 项目结构
 
 ```
-final-trade/
-├── index.html
-├── package.json                # 前端依赖
-├── vite.config.js              # Vite 配置，/api 代理到 localhost:3001
+ultimate-trade/
+├── vite.config.js              # /api 代理到 localhost:3001
 ├── server/
-│   ├── package.json            # 后端依赖
-│   ├── index.js                # Koa API 代理（含北向资金双源容错 + AI智能选股 + 结构化选股回退）
-│   ├── analysis.js             # 分析引擎（宏观评分/板块RS/估值分析）
-│   ├── stockAnalysis.js        # 个股分析引擎（基本面/资金流/主力资金/融资融券/北向资金/股东户数）
-│   └── fallback.js             # 腾讯/新浪备用数据源
-├── src/
-│   ├── main.js
-│   ├── App.vue
-│   ├── router/index.js         # 8 条页面路由
-│   ├── stores/
-│   │   ├── market.js           # 大盘数据（指数/涨跌/融资/北向/涨跌停）
-│   │   ├── marketAnalysis.js   # 分析数据（宏观因子/板块RS/估值）
-│   │   ├── watchlist.js        # 自选股 + 行情刷新
-│   │   ├── position.js         # 持仓管理
-│   │   └── journal.js          # 交易日志 + 绩效统计
-│   ├── utils/
-│   │   ├── marketJudge.js      # 九维大盘判定算法（v7.3，含波动率维度，多指数+增强背离+涨跌停精细化）
-│   │   ├── marketCycle.js      # 五维周期定位引擎（10阶段）
-│   │   ├── indicators.js       # 技术指标计算（MA/MACD/KDJ/RSI/BOLL + 6类信号生成）
-│   │   ├── scoring.js          # 个股评分引擎（三维度加权 技术40/基本面42/资金29 + 行业感知PE/PB/负债率阈值）
-│   │   ├── position.js         # ATR 仓位/止损/盈亏比计算
-│   │   ├── screenerPrompt.js   # 四层漏斗选股生成器（AI keyWordNew + 结构化 filter + 可读描述，Dashboard + Screener 共用）
-│   │   ├── storage.js          # localStorage 统一读写工具
-│   │   └── constants.js        # 交易规则常量 + 全局刷新间隔
-│   ├── components/
-│   │   ├── NavBar.vue          # 顶部导航
-│   │   ├── Sparkline.vue       # Canvas 迷你走势图
-│   │   ├── IntradayChart.vue   # Canvas 分时图（价格线 + 成交量）
-│   │   ├── KlineChart.vue      # K 线图组件
-│   │   └── analysis/
-│   │       ├── TechnicalPanel.vue   # 技术面（K线图 + 指标 + 信号列表）
-│   │       ├── FundamentalPanel.vue # 基本面（PE/PB分位 + 财务趋势图 + 指标卡片）
-│   │       ├── CapitalFlowPanel.vue # 资金面（量价分析 + 主力资金 + 北向资金 + 融资融券 + 股东户数）
-│   │       └── ScorePanel.vue       # 综合评分（仪表盘 + 雷达图 + 三列明细）
-│   ├── views/
-│   │   ├── Dashboard.vue       # 大盘状态 + 宏观卡片 + 行业资金流向 & RS轮动 + 策略选股建议
-│   │   ├── Watchlist.vue       # 股票池
-│   │   ├── StockAnalysis.vue   # 个股分析（综合评分/技术面/基本面/资金面）
-│   │   ├── Screener.vue        # 选股筛选
-│   │   ├── Position.vue        # 仓位计算
-│   │   ├── Journal.vue         # 交易日志
-│   │   └── Guide.vue           # 策略速查
-│   └── styles/
-│       └── global.css          # CSS 变量 + 全局样式
-└── docs/
-    ├── PRD.md
-    ├── 东方财富实战选股提示词.md
-    ├── 顶级股票交易系统.md
-    └── 世界顶级交易系统全景梳理.md
+│   ├── index.js                # Koa 入口：市场/选股/个股行情 API
+│   ├── analysis.js             # 宏观评分 / 板块 RS / 估值分析
+│   ├── stockAnalysis.js        # 个股分析：基本面/资金流/主力/融资融券/北向/股东户数/龙虎榜/增减持/基准K线
+│   ├── aiJudge.js              # 个股 AI 综合判断（SSE）
+│   └── fallback.js             # 腾讯/新浪备用源
+└── src/
+    ├── router/index.js
+    ├── stores/                 # market / marketAnalysis / watchlist / position / journal / stockAnalysis
+    ├── utils/
+    │   ├── marketJudge.js      # 多维大盘判定（加权 + 状态惯性）
+    │   ├── marketCycle.js      # 五维周期定位
+    │   ├── indicators.js       # MA/MACD/KDJ/RSI/BOLL + 信号检测
+    │   ├── scoring.js          # 四维度个股评分引擎（含行业感知阈值）
+    │   ├── riskMetrics.js      # Sharpe / 最大回撤 / Beta
+    │   ├── position.js         # ATR 仓位/止损/盈亏比
+    │   └── screenerPrompt.js   # 四层漏斗选股生成器
+    ├── components/             # K线/分时/Sparkline + analysis/*（Technical/Fundamental/CapitalFlow/Score 面板）
+    └── views/                  # Dashboard / Watchlist / StockAnalysis / Screener / Position / Journal / Guide
 ```
+
+> 完整设计、维度权重、阈值表、数据流见 [PRD.md](PRD.md)，设计规范见 [DESIGN.md](DESIGN.md)。
 
 ## 快速开始
 
-### 环境要求
-
-- Node.js >= 18
-- npm >= 9
-
-### 安装与启动
-
 ```bash
-# 1. 安装前端依赖
-npm install
-
-# 2. 安装后端依赖
-cd server && npm install && cd ..
-
-# 3. 启动后端（端口 3001）
-cd server && node index.js
-
-# 4. 启动前端开发服务器（端口 5173）
-npm run dev
+npm install                              # 前端依赖
+cd server && npm install && cd ..        # 后端依赖
+cd server && node index.js               # 后端 :3001（需在该目录，dotenv 读 ./server/.env）
+npm run dev                              # 前端 :5173（自动代理 /api → :3001）
 ```
 
-浏览器打开 `http://localhost:5173` 即可使用。
+打开 `http://localhost:5173`。生产构建 `npm run build`（输出 `dist/`）。
 
-### 生产构建
+**可选**：AI 智能选股需登录态，在 `server/.env` 配置 `EASTMONEY_EMAUTH`（东方财富 cookie），否则只能解析 2–3 个条件。
 
-```bash
-npm run build      # 输出到 dist/
-cd server && node index.js   # 启动后端，配合静态文件服务使用
-```
+## 核心能力
 
-## API 路由
+### 多维大盘判定
 
-后端代理东方财富公开数据，统一返回 `{ ok: boolean, data?: any, error?: string }`。
+8 个维度加权评分 + 状态惯性（同向自由切换，跨向需连续 2 交易日确认 + 3 日历日冷却），自动给出牛市/偏多/震荡/偏空/熊市，并映射到推荐策略与建议仓位。宏观因子（PMI/M1-M2/CPI/GDP/社融）作为修正项，社融用 PPI 平减还原实际增速。
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 健康检查 |
-| GET | `/api/market/indices` | 三大指数 + MA20/60/120 |
-| GET | `/api/market/breadth` | 沪深京A股涨跌家数（东方财富 ulist API，30秒缓存） |
-| GET | `/api/market/indices/intraday` | 三大指数分时数据 |
-| GET | `/api/market/northbound` | 近 20 日北向资金成交额（东方财富主用，证券时报 stcn 备用） |
-| GET | `/api/market/margin` | 融资融券余额 |
-| GET | `/api/market/limit-stats` | 涨跌停统计（涨停/跌停/封板率/赚钱效应/打板次日收益/连板统计/涨停板块分布，JRJ主用含市场热度+历史） |
-| GET | `/api/analysis/macro` | 宏观因子评分（PMI/M1-M2/CPI/GDP/社融），6小时缓存 |
-| GET | `/api/analysis/sectors` | 行业排名 + 资金流向 + RS轮动信号（涨幅TOP5/资金TOP5/RS强弱TOP5），等长窗口超额收益 |
-| GET | `/api/analysis/valuation` | 估值分析（PE/MA250/股债利差/52周高低） |
-| GET | `/api/stock/:code/kline` | 个股日 K 线（120 日） |
-| GET | `/api/stock/:code/kline5y` | 个股日 K 线（~1200 日） |
-| GET | `/api/stock/:code/intraday` | 个股分时数据 |
-| GET | `/api/stock/:code/intraday5d` | 个股近 5 日分时数据 |
-| GET | `/api/stock/:code/basic` | 个股基本面（PE/PB/市值/ROE） |
-| GET | `/api/stock/batch/quotes` | 批量实时行情 |
-| GET | `/api/stock/search` | 搜索股票（代码/名称/拼音） |
-| GET | `/api/stock/screen` | 策略选股 — 备用（趋势突破/回调买入） |
-| GET | `/api/stock/xuangu/structured` | 结构化选股 — 回退（结构化 filter 条件，调用东方财富 xuangu API） |
-| POST | `/api/stock/xuangu/ai` | AI 智能选股 — 主用（自然语言 keyWordNew，东财 AI API 解析） |
-| GET | `/api/stock/xuangu/ai/status` | AI 选股登录态状态（cookie 是否已配置） |
-| GET | `/api/stock-analysis/fundamental` | 个股基本面（PE/PB/ROE/营收/净利/毛利率/负债率/每股现金流/市值/行业），30分钟缓存 |
-| GET | `/api/stock-analysis/capital-flow` | 个股资金流向（量价分析），5分钟缓存 |
-| GET | `/api/stock-analysis/main-force-flow` | 个股主力资金流向（近60日），5分钟缓存 |
-| GET | `/api/stock-analysis/margin` | 个股融资融券明细（近30天），30分钟缓存 |
-| GET | `/api/stock-analysis/northbound` | 个股北向资金持仓（近30天），60分钟缓存 |
-| GET | `/api/stock-analysis/shareholder` | 个股股东户数历史（含环比变化），60分钟缓存 |
-
-## 核心功能
-
-### 九维大盘判定
-
-从 8 个维度自动判断市场状态（牛市/偏多/震荡/偏空/熊市），采用**加权评分 + 状态惯性**机制。v7.2 改进：多指数综合判定、增强背离检测、涨跌停精细化、连续确认状态惯性。
-
-1. **MACD**（权重 1.0）— 三指数(上证/深证/创业板)多指数投票，真实金叉/死叉检测（hist 穿越零轴）、零轴位置、柱状图变化、**增强背离检测**（多尺度极值 2/3/5-bar + 幅度过滤 + 时间衰减置信度 0.1~1.0）；动量衰减判 neutral 而非反转；弱信号降权 ×0.7
-2. **涨跌家数**（权重 1.5）— 沪深京A股涨跌比 + 历史趋势；牛熊分界线 1.8/0.55，过渡档 1.5/0.67 降权 ×0.7
-3. **RSI**（权重 1.0）— 三指数多指数投票，RSI(14) 超买超卖与趋势方向、**增强背离检测**；RSI≥60 高位偏多（×0.7）、<40 偏弱（×0.7）、超卖回升需 RSI>45
-4. **融资余额**（权重 1.2）— 10 日线性回归斜率 + 加速度分析
-5. **量价配合**（权重 1.3）— 三指数多指数投票，OBV 趋势（归一化斜率 ±0.05% 死区）+ **增强背离检测** + 成交额/量智能显示；不显著时返回 neutral
-6. **北向资金**（权重 1.5）— 5 日/20 日均量比 + 成交额趋势方向
-7. **涨跌停**（权重 1.3）— 11 项并行评分：涨跌比/跌停数/涨停质量/打板次日收益/封板率/赚钱效应/**连板统计/板块集中度惩罚/自然涨停率惩罚/涨停趋势**；跌停 0 家时按量级映射避免失真
-8. **宏观因子**（\|score\| × 0.5）— 服务端 5 因子评分：PMI(±1) + M1-M2剪刀差(±1) + CPI(-1~-0.5) + GDP(±0.5) + 社融(±0.5)，clamp [-2,+2]
-
-**加权评分**: 各维度乘以权重累加至 bullW/bearW，强信号（背离 ×confidence、极端比值等）权重最高 ×2.0。
-
-**状态惯性（hysteresis v7.2）**: 同方向自由切换；跨方向切换需 |net| ≥ 1.5 + **连续 2 个交易日确认**（crossCount）+ **3 日历日冷却期**（lastFlipDate）；进出中性需 |net| ≥ 1.5。
-
-**阈值**: 牛市/熊市 ≥ 4.5，偏多/偏空 ≥ 3.0，确认 ≥ 3.5。
-
-≥ 3.5 加权分的同向信号确认状态，状态映射到建议仓位和推荐策略。
-
-### 策略选股建议
-
-根据九维判据结果自动匹配策略，复用选股筛选页面的**四层漏斗逻辑**生成自然语言 keyWordNew 查询（由 `screenerPrompt.js` 的 `buildKeyWordNew()` 生成），优先通过东财 AI 自然语言选股 API 实时查询，AI 解析不完整时自动回退到结构化选股 API：
-
-| 市场状态 | 推荐策略 | 选股条件 |
-|---------|---------|---------|
-| 牛市 | 趋势突破 | 排雷8项 + ROE≥8~12%, 营收/利润增速≥5~10%, 负债率≤60~65%, PE 3~60, 市值≥30~50亿, MACD金叉+均线多头 + 机构增持 |
-| 偏多 | 回调买入 | 排雷8项 + ROE≥8~12%, 营收/利润增速≥0~5%, PE 3~60, 负债率≤60~65%, 市值≥30~50亿, 均线多头+量能收缩 |
-| 震荡 | 回调买入/底部确认 | 排雷8项 + ROE≥8~12%, 营收/利润增速≥0~5%, PE 3~50, 负债率≤60~65%, 市值≥30~50亿, 业绩超预期 + 均线多头+量缩（可切换底部确认） |
-| 偏空/熊市 | 空仓观望 | 不生成选股建议 |
-
-系统自动生成 keyWordNew 并实时查询，支持严/宽两种选股模式。牛市自动启用"机构增持"景气度，震荡市启用"业绩超预期"。震荡市支持切换"底部确认"策略。Dashboard 和 Screener 页面共用同一套查询生成逻辑（`buildKeyWordNew()` + `buildMarketStateQuery()`）。
-
-**登录态管理**: AI 选股 API 在无登录态时只能解析 2-3 个条件。通过 `server/.env` 配置 `EASTMONEY_EMAUTH` cookie 值，后端自动注入请求头。前端通过 `/api/stock/xuangu/ai/status` 检测配置状态，未配置时显示提示。
-
-### 行业资金流向 & 板块 RS 轮动
-
-Dashboard 统一面板展示：
-
-**资金流向**（三级行业分类，东方财富 ZJLX API，始终显示）：
-- 涨幅 TOP5 + 主力净流入 TOP5
-- 含主力净流入金额、领涨股
-
-**板块 RS 轮动**（基于每日板块快照，持久化到 `server/rs_history.json`，保留 30 天）：
-- 板块与基准使用等长窗口计算超额收益，确保可比性
-- **RS Score** = excess5d × 0.5 + excess10d × 0.3 + excess20d × 0.2（板块超额收益加权）
-- **轮动信号**: TOP10 板块中加速 ≥ 6 → `strengthening`，减速 ≥ 6 → `weakening`，其他 → `mixed`
-- Dashboard 显示 RS 强势/弱势 TOP5，需 ≥ 5 天历史快照
-- 策略选股自动注入 TOP3 强势行业
-
-### 宏观因子评分
-
-服务端从东方财富数据中心获取 CPI/PMI/M2/GDP，从 macroview.club 获取社融增量历史数据，独立评分后累加：
-
-| 因子 | 正面 | 负面 | 分值 |
-|------|------|------|------|
-| PMI | > 50.5 | < 49.5 | ±1 |
-| M1-M2 剪刀差 | 收窄 | 扩大 | ±1 |
-| CPI | 0-2%（温和） | > 2%（通胀），< 0%（通缩） | -1~-0.5 |
-| GDP | > 5.5% | < 4.5% | ±0.5 |
-| 社融 | 年增量同比 > 5% | < -5% | ±0.5 |
-
-总分 clamp 到 [-2, +2]，作为第 8 维度修正项（权重 = \|score\| × 0.5）加入九维判据。
-
-### 个股综合评分
-
-三维度加权评分引擎（`src/utils/scoring.js`），对自选股进行全方位量化评估：
+### 个股综合评分（四维度 + 投资风格）
 
 | 维度 | 满分 | 子项 |
 |------|------|------|
-| 技术面 | 40 | MA趋势(10) + MACD(8) + KDJ(7) + RSI(7) + BOLL(4) + 量价(4) |
-| 基本面 | 42 | PE估值(8) + ROE(8) + 营收增长(5) + 净利增长(5) + 负债率(4) + PB估值(4) + 现金流质量(4) + 毛利率(4) |
-| 资金面 | 29 | 量价趋势(5) + 主力资金(8) + 融资融券(5) + 北向资金(6) + 筹码趋势(5) |
+| 技术面 | 40 | 均线排列 + MACD + KDJ + RSI + BOLL + 均线斜率 + 量能 + 价格位置 |
+| 基本面 | 42 | PE + ROE + 营收/净利增长 + 负债率 + PB + 现金流质量 + 毛利率 |
+| 资金面 | ≈35–42* | 量价趋势 + 主力资金 + 融资融券 + 北向 + 筹码 + 资金背离 + 龙虎榜 + 增减持 |
+| 风险面 | 15 | Sharpe + 最大回撤 + Beta |
 
-动态权重：有基本面数据时 45/30/25，无基本面时 60/15/25。PE/PB 阈值按 20 个行业分类独立配置，负债率按 7 大行业组适配。技术指标信号由 `src/utils/indicators.js` 生成，包含 MA/MACD/KDJ/RSI/BOLL/量价 6 类信号检测器，支持背离检测。
+\* 资金面满分动态：北向/筹码属季度数据，按风格降权。事件型因子（龙虎榜 10 日窗口、增减持 90 天幅度 + 控股股东 180 天警示）见 PRD §5.2.6。
 
-**评分引擎 v4 改进要点**:
+权重按投资风格切换：**短线** 技术 0.35 / 资金 0.42 / 基本 0.15 / 风险 0.08；**中线** 0.30 / 0.32 / 0.26 / 0.12；**长线** 0.22 / 0.20 / 0.40 / 0.18。PE/PB/负债率/毛利率阈值按 24 个行业分类独立配置。
 
-技术面：
-- MA 交叉检测扩展为三级（MA5/10、MA10/20、MA20/60），各有独立的回溯窗口（5/7/10 日）
-- KDJ 位置感知：低位金叉(K<30) +3、高位死叉(K>70) -3，过滤不可靠交叉（高位金叉/低位死叉）
-- RSI(6/24) 交叉从单日检测改为 5 日回溯窗口；金叉期间跳过超买信号，死叉期间跳过超卖信号；多周期共振在金叉/死叉期间抑制；超买时中长周期未确认则降级为中性
-- BOLL 趋势感知：引入 MA20 方向判断，上升趋势沿上轨=偏强，下降趋势沿下轨=偏弱，新增突破/跌破布林带信号
-- 量价趋势感知：引入 MA20 方向判断，上升趋势缩量回调=洗盘(bullish)，下降趋势缩量下跌=无量阴跌(bearish)；连续缩量上涨=量价背离(bearish)
+### 策略选股
 
-基本面：
-- PE/PB 估值新增中间档 `(fair×2+high)/3`，消除合理→偏高的评分断崖
-- 营收/净利增长新增 5%~10% 中间档（3 分），0~10% 不再只给 2 分
-- 现金流质量 0~0.5 区间从 2 分降为 1 分，与 0.5~0.8 区分
+依大盘状态匹配策略（牛市趋势突破 / 偏多回调买入 / 震荡回调或底部确认 / 偏空空仓），复用四层漏斗生成自然语言查询，AI 自然语言选股为主、结构化 API 回退，三级容错。
 
-资金面：
-- 主力资金 `combinedPct === 0` 死代码修复，改为 ±0.5 中性区间，3 分档可正常触发
-- 融资融券余额阈值从 5%/2% 降至 2%/0.5%，适应实际日环比幅度；新增 ±0.3% 中性区间；融券基数门槛从 10 万提高到 100 万
-- 北向资金 `changeRatio === 0` 死代码修复，改为 ±0.5 中性区间
-- 筹码趋势从 6 档细化为 9 档（±1%/±3%/±5%/±10%），±1% 内判为"稳定"；连续趋势修正要求每期幅度 >1%
-- 量价趋势服务端增加 20 日趋势判断，"缩量下跌"和"缩量调整"结合趋势返回不同文本
-- 所有零点判断统一使用死区间（±0.3 或 ±0.5），消除浮点精度问题
+### ATR 仓位与止损
 
-### ATR 动态仓位计算
+- 止损价 = 买入价 − N × ATR(14)；仓位 = min(总资金 × 2% / 止损幅度, 总资金 × 25%)
+- 跟踪止盈只上移不下调
+- 趋势突破（N=1.5，回撤 8%）/ 回调买入（N=2.0，15%）/ 底部右侧（N=3.0，20%）
 
-- **止损价** = 买入价 − N × ATR(14)
-- **仓位** = min(总资金 × 2% / 止损幅度, 总资金 × 25%)
-- **跟踪止盈** = max(昨日止盈价, 最高收盘价 × (1 − 回撤比例))，只上移不下调
+## API 概览
 
-三种策略参数：
+统一返回 `{ ok, data?, error? }`。按域分组：
 
-| 策略 | ATR 乘数 N | 回撤比例 | 持有期 |
-|------|-----------|---------|--------|
-| 趋势突破 | 1.5 | 8% | 1-4 周 |
-| 回调买入 | 2.0 | 15% | 2-8 周 |
-| 底部右侧确认 | 3.0 | 20% | 1-6 月 |
+| 域 | 主要端点 |
+|----|----------|
+| 市场 | `/api/market/indices`、`/intraday`、`/breadth`、`/northbound`、`/margin`、`/limit-stats` |
+| 分析 | `/api/analysis/macro`、`/sectors`、`/valuation` |
+| 个股行情 | `/api/stock/:code/kline`、`/kline5y`、`/intraday`、`/intraday5d`、`/basic`、`/api/stock/batch/quotes`、`/search` |
+| 个股分析 | `/api/stock-analysis/{fundamental, capital-flow, main-force-flow, margin, northbound, shareholder, billboard, holder-increase, benchmark-kline}` |
+| 选股 | `POST /api/stock/xuangu/ai`（主）、`GET /xuangu/structured`（回退）、`/xuangu/ai/status` |
+| AI | `POST /api/stock-analysis/ai-judge`（SSE 流） |
 
-## 全局配置
+服务端 LRU 缓存：行情/资金流 5 分钟，基本面/融资融券 30 分钟，北向/股东户数/龙虎榜/增减持 60 分钟，宏观 6 小时。
 
-定时刷新间隔统一在 `src/utils/constants.js` 的 `REFRESH_INTERVAL` 中配置（默认 10000ms），所有页面的定时器共用同一设置。
+## 数据源与约定
 
-Dashboard 涨跌家数使用独立的 30 秒刷新定时器（`BREADTH_INTERVAL`），服务端缓存也为 30 秒（`BREADTH_CACHE_TTL`），确保盘中数据实时性。宏观因子服务端缓存 6 小时（宏观数据低频更新），板块 RS + 行业资金流向数据服务端缓存 5 分钟。前一市场状态（含跨方向确认计数 crossCount 和翻转冷却日期 lastFlipDate）持久化到 localStorage（`market_prev_status`），连续确认状态惯性机制在页面刷新后继续生效。做多窗口速判涨跌比阈值 1.8。
-
-## 数据查询策略
-
-- 9:00 前使用前一交易日日期参数查询（获取最新收盘数据）
-- 9:00 后使用当前日期参数查询（获取盘中实时数据）
-- 东方财富 push2 系列域名从服务器端不可达时，涨跌家数走东方财富 ulist API（push2.eastmoney.com，单请求获取沪A+深A+北交所涨跌平家数），个股数据走腾讯备用
-- 北向资金使用 datacenter-web RPT_MUTUAL_DEALAMT 报表（主用），失败时自动回退证券时报 stcn 数据源
-- 选股三级回退：AI 自然语言选股（`POST /api/stock/xuangu/ai`，主用）→ 结构化选股 API（`GET /api/stock/xuangu/structured`，回退）→ 本地筛选（`GET /api/stock/screen`，兜底）
-- AI 选股 API 在无 `EASTMONEY_EMAUTH` cookie 时只能解析 2-3 个条件，前端检测 total>200 且 conditions<3 时自动回退
-- AI 选股结果以 keyWordNew 为缓存 key，TTL 5 分钟
-- 个股分析数据均来自东方财富 datacenter-web API：基本面(RPT_VALUEANALYSIS_DET + ZYZBAjaxNew)、融资融券(RPTA_WEB_RZRQ_GGMX)、北向资金(RPT_MUTUAL_HOLDSTOCKNDATE_STA_NEW)、主力资金(个股资金流向)、股东户数(RPT_HOLDERNUM_DET)
-- 服务端 LRU 缓存（Map 插入序 + 读取序更新），基本面/融资融券 30 分钟、资金流/主力资金 5 分钟、北向资金/股东户数 60 分钟
-
-## 配色说明
-
-遵循 A 股惯例：**红涨绿跌**。
-
-- `#ff453a` (红) — 涨、盈利、牛市信号
-- `#30d158` (绿) — 跌、亏损、熊市信号
+- 个股分析数据均来自东方财富 datacenter：基本面 `RPT_VALUEANALYSIS_DET` + `ZYZBAjaxNew`、融资融券 `RPTA_WEB_RZRQ_GGMX`、北向 `RPT_MUTUAL_HOLDSTOCKNDATE_STA_NEW`、股东户数 `RPT_HOLDERNUM_DET`、龙虎榜 `RPT_DAILYBILLBOARD_DETAILS`、增减持 `RPT_SHARE_HOLDER_INCREASE`
+- 9:00 前查前一交易日（收盘数据），9:00 后查当日（盘中实时）
+- 北向资金主用 datacenter，失败回退证券时报
+- 配色遵循 A 股惯例：**红涨 `#ff453a` / 绿跌 `#30d158`**
 
 ## License
 

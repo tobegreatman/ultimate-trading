@@ -10,6 +10,7 @@ import { calcStopLoss, getAdjustedAtrN } from '../utils/position.js'
 import { getTrendConclusion, getValuationConclusion, getCapitalConclusion } from '../utils/scoring.js'
 import { useJournalStore } from '../stores/journal.js'
 import { usePositionStore } from '../stores/position.js'
+import { useMarketAnalysisStore } from '../stores/marketAnalysis.js'
 
 export function useStrategyGuide({
   selectedCode,
@@ -25,10 +26,13 @@ export function useStrategyGuide({
 }) {
   const journalStore = useJournalStore()
   const positionStore = usePositionStore()
+  const marketAnalysisStore = useMarketAnalysisStore()
 
   // ==================== 诊断结论 ====================
   const trendConclusion = computed(() => getTrendConclusion(techSignals.value))
-  const valuationConclusion = computed(() => getValuationConclusion(fundamental.value))
+  const valuationConclusion = computed(() => getValuationConclusion(fundamental.value, {
+    bondYield10y: marketAnalysisStore.valuation?.bondYield10y ?? null
+  }))
   const capitalConclusion = computed(() => getCapitalConclusion(capitalFlow.value))
 
   // ==================== 信号质量评估 ====================

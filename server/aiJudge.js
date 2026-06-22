@@ -26,6 +26,14 @@ const AI_CACHE_TTL = 60 * 1000  // 1分钟缓存
 const AI_CACHE_MAX_SIZE = 100
 const aiCache = new Map()
 
+// 允许的模型白名单（key 为前端传入的标识，value 为智谱 API 实际模型名）
+// 智谱 API 模型 ID 使用点号分隔版本号（参考官方文档 cURL 示例）
+const MODEL_MAP = {
+  'glm-4.7-flash': 'glm-4.7-flash',   // 免费，30B MoE，200K 上下文
+  'glm-5.2': 'glm-5.2',               // 付费旗舰，需订阅 Coding Plan 或按量计费
+}
+const DEFAULT_MODEL = 'glm-4.7-flash'
+
 /** LRU 淘汰：超过上限时删除最旧的条目 */
 function evictAICache() {
   if (aiCache.size <= AI_CACHE_MAX_SIZE) return
@@ -162,9 +170,10 @@ async function handleAIJudge(ctx) {
     return
   }
 
-  // 缓存检查（Key 包含评分 + 关键信号，评分变化时刷新）
+  // 缓存检查（Key 包含评分 + 关键信号 + 模型，评分变化或切换模型时刷新）
   const keySignals = (body.techSummary?.keySignals || '').slice(0, 60)
-  const cacheKey = `${body.code}_${body.scoreSummary?.total || 0}_${keySignals}`
+  const model = MODEL_MAP[body.model] ? body.model : DEFAULT_MODEL
+  const cacheKey = `${body.code}_${body.scoreSummary?.total || 0}_${keySignals}_${model}`
   const cached = aiCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < AI_CACHE_TTL) {
     ctx.status = 200
@@ -191,7 +200,7 @@ async function handleAIJudge(ctx) {
 
   try {
     const stream = await client.chat.completions.create({
-      model: 'glm-5.1',
+      model: model,
       messages: [{ role: 'user', content: prompt }],
       stream: true,
       max_tokens: 8192,

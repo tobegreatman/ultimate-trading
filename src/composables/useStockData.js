@@ -6,6 +6,7 @@
  */
 import { ref } from 'vue'
 import { useStockAnalysisStore } from '../stores/stockAnalysis.js'
+import { useMarketAnalysisStore } from '../stores/marketAnalysis.js'
 import { calcAllIndicators } from '../utils/indicators.js'
 import { calculateScore } from '../utils/scoring.js'
 import { saveScoreSnapshot } from '../utils/scoreHistory.js'
@@ -13,6 +14,7 @@ import { calcRiskScoreItems } from '../utils/riskMetrics.js'
 
 export function useStockData(selectedCode, investStyle) {
   const analysisStore = useStockAnalysisStore()
+  const marketAnalysisStore = useMarketAnalysisStore()
 
   // ==================== 数据 ====================
   const klines = ref([])
@@ -23,7 +25,12 @@ export function useStockData(selectedCode, investStyle) {
   const marginData = ref(null)
   const northboundData = ref(null)
   const mainForceFlow = ref(null)
+  const sectorCapitalData = ref(null)
+  const billboardData = ref(null)
   const shareholderData = ref(null)
+  const holderIncreaseData = ref(null)
+  const pledgeData = ref(null)
+  const goodwillData = ref(null)
   const benchmarkKlines = ref(null)
   const klinePeriod = ref('101')
 
@@ -51,7 +58,7 @@ export function useStockData(selectedCode, investStyle) {
 
   // ==================== 错误记录 ====================
   function setLoadErrors(results) {
-    const names = ['kline', 'fundamental', 'capitalFlow', 'margin', 'northbound', 'mainForce', 'shareholder']
+    const names = ['kline', 'fundamental', 'capitalFlow', 'margin', 'northbound', 'mainForce', 'shareholder', 'billboard', 'holderIncrease', 'pledge', 'goodwill'] // 注：sectorCapital 错误并入 mainForce 桶（资金面 Tab 整体降级），不单列
     const errs = {}
     results.forEach((r, i) => {
       if (r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.ok)) {
@@ -76,11 +83,24 @@ export function useStockData(selectedCode, investStyle) {
       injections._mainForceSummary = mainForceFlow.value.summary
     }
     if (mainForceFlow.value?.data?.length) injections._mainForceData = mainForceFlow.value.data
+    // 板块资金（个股所属行业的主力净占比）— 资金面共振的板块层输入
+    if (sectorCapitalData.value?.available && sectorCapitalData.value.sector) {
+      injections._sectorCapital = sectorCapitalData.value.sector
+      injections._sectorIndustry = sectorCapitalData.value.industry || ''
+    }
     if (shareholderData.value?.latest) {
       injections._shareholderLatest = shareholderData.value.latest
       injections._shareholderPrev = shareholderData.value.prev
       injections._shareholderData = shareholderData.value.data
       injections._shareholderFrequency = 'quarterly'
+    }
+    if (billboardData.value?.summary) {
+      injections._billboardSummary = billboardData.value.summary
+      injections._billboardLatest = billboardData.value.latest
+    }
+    if (holderIncreaseData.value?.summary) {
+      injections._holderIncreaseSummary = holderIncreaseData.value.summary
+      injections._holderIncreaseLatest = holderIncreaseData.value.latest
     }
     if (Object.keys(injections).length) {
       capitalFlow.value = { ...(capitalFlow.value || {}), ...injections }
@@ -98,13 +118,20 @@ export function useStockData(selectedCode, investStyle) {
     let riskItems = null
     const kl = klines.value
     if (kl.length >= 20) {
-      const stockCloses = kl.map(k => k.close)
       const benchCloses = benchmarkKlines.value?.map(k => k.close) || null
-      const riskResult = calcRiskScoreItems(stockCloses, benchCloses, investStyle.value)
+      // 传完整K线对象数组（含 amount/turnover）+ fundamental（含24季度历史）+ pledgeRatio + goodwillRatio，使风险面可计算流动性/财务健康度/股权质押/商誉
+      const pledgeRatio = pledgeData.value?.latest?.pledgeRatio ?? null
+      const goodwillRatio = goodwillData.value?.latest?.goodwillRatio ?? null
+      const riskResult = calcRiskScoreItems(kl, benchCloses, investStyle.value, fund, pledgeRatio, goodwillRatio)
       riskItems = riskResult.items
     }
 
-    scoreResult.value = calculateScore(ts, fund, cap, industry, investStyle.value, riskItems)
+    // 构造市场上下文：10年期国债收益率用于PE/PB利率调节
+    const marketCtx = {
+      bondYield10y: marketAnalysisStore.valuation?.bondYield10y ?? null
+    }
+
+    scoreResult.value = calculateScore(ts, fund, cap, industry, investStyle.value, riskItems, marketCtx)
 
     if (capitalLoadedSeq === loadSeq) {
       saveScoreSnapshot(selectedCode.value, scoreResult.value)
@@ -152,6 +179,11 @@ export function useStockData(selectedCode, investStyle) {
       northboundData.value = null
       mainForceFlow.value = null
       shareholderData.value = null
+      billboardData.value = null
+      holderIncreaseData.value = null
+      pledgeData.value = null
+      goodwillData.value = null
+      sectorCapitalData.value = null
     }
 
     try {
@@ -179,10 +211,15 @@ export function useStockData(selectedCode, investStyle) {
         { status: 'fulfilled', value: { ok: true } },
         { status: 'fulfilled', value: { ok: true } },
         { status: 'fulfilled', value: { ok: true } },
+        { status: 'fulfilled', value: { ok: true } },
+        { status: 'fulfilled', value: { ok: true } },
+        { status: 'fulfilled', value: { ok: true } },
+        { status: 'fulfilled', value: { ok: true } },
       ])
 
       loading.value = false
-      // 阶段一不计算评分，避免资金面数据不完整导致分数与阶段二不一致（闪跳）
+      // 阶段一先用技术面+基本面计算评分，阶段二资金面加载后更新
+      updateScore(skipAI)
       dataTimestamp.value = new Date()
       lastRefreshTime.value = Date.now()
 
@@ -200,13 +237,18 @@ export function useStockData(selectedCode, investStyle) {
     capitalLoadedSeq = seq
 
     try {
-      const [capRes, marginRes, nbRes, mfRes, shRes, bmRes] = await Promise.allSettled([
+      const [capRes, marginRes, nbRes, mfRes, scRes, shRes, bbRes, bmRes, hiRes, pgRes, gwRes] = await Promise.allSettled([
         fetch(`/api/stock-analysis/capital-flow?code=${code}`, { signal }).then(r => r.json()),
         fetch(`/api/stock-analysis/margin?code=${code}`, { signal }).then(r => r.json()),
         fetch(`/api/stock-analysis/northbound?code=${code}`, { signal }).then(r => r.json()),
         fetch(`/api/stock-analysis/main-force-flow?code=${code}`, { signal }).then(r => r.json()),
+        fetch(`/api/stock-analysis/sector-capital?code=${code}`, { signal }).then(r => r.json()),
         fetch(`/api/stock-analysis/shareholder?code=${code}`, { signal }).then(r => r.json()),
+        fetch(`/api/stock-analysis/billboard?code=${code}`, { signal }).then(r => r.json()),
         fetch('/api/stock-analysis/benchmark-kline?lmt=250', { signal }).then(r => r.json()),
+        fetch(`/api/stock-analysis/holder-increase?code=${code}`, { signal }).then(r => r.json()),
+        fetch(`/api/stock-analysis/pledge?code=${code}`, { signal }).then(r => r.json()),
+        fetch(`/api/stock-analysis/goodwill?code=${code}`, { signal }).then(r => r.json()),
       ])
 
       if (seq !== loadSeq) return
@@ -214,7 +256,7 @@ export function useStockData(selectedCode, investStyle) {
       setLoadErrors([
         { status: 'fulfilled', value: { ok: true } },
         { status: 'fulfilled', value: { ok: true } },
-        capRes, marginRes, nbRes, mfRes, shRes
+        capRes, marginRes, nbRes, mfRes, shRes, bbRes, hiRes, pgRes, gwRes
       ])
 
       if (bmRes.status === 'fulfilled' && bmRes.value.ok) {
@@ -232,8 +274,23 @@ export function useStockData(selectedCode, investStyle) {
       if (mfRes.status === 'fulfilled' && mfRes.value.ok) {
         mainForceFlow.value = mfRes.value.data
       }
+      if (scRes.status === 'fulfilled' && scRes.value.ok) {
+        sectorCapitalData.value = scRes.value.data
+      }
       if (shRes.status === 'fulfilled' && shRes.value.ok) {
         shareholderData.value = shRes.value.data
+      }
+      if (bbRes.status === 'fulfilled' && bbRes.value.ok) {
+        billboardData.value = bbRes.value.data
+      }
+      if (hiRes.status === 'fulfilled' && hiRes.value.ok) {
+        holderIncreaseData.value = hiRes.value.data
+      }
+      if (pgRes.status === 'fulfilled' && pgRes.value.ok) {
+        pledgeData.value = pgRes.value.data
+      }
+      if (gwRes.status === 'fulfilled' && gwRes.value.ok) {
+        goodwillData.value = gwRes.value.data
       }
 
       injectCapitalExtras()
@@ -306,7 +363,10 @@ export function useStockData(selectedCode, investStyle) {
     northboundData.value = null
     mainForceFlow.value = null
     shareholderData.value = null
+    billboardData.value = null
+    holderIncreaseData.value = null
     benchmarkKlines.value = null
+    sectorCapitalData.value = null
 
     if (onClear) onClear()
 
@@ -324,14 +384,28 @@ export function useStockData(selectedCode, investStyle) {
       if (dow === 0 || dow === 6) return
       const h = now.getHours()
       const m = now.getMinutes()
-      if (h >= 16 || (h === 15 && m >= 30)) {
+      const minutes = h * 60 + m  // 当日分钟数（0-1439）
+
+      // A股交易时段：9:15-11:30（含集合竞价）、13:00-15:30（含收盘数据更新）
+      // 盘后数据最终更新窗口：15:30-16:00
+      const inMorningSession = minutes >= 555 && minutes <= 690    // 9:15-11:30
+      const inAfternoonSession = minutes >= 780 && minutes <= 930  // 13:00-15:30
+      const inPostCloseWindow = minutes > 930 && minutes <= 960    // 15:30-16:00
+
+      if (inMorningSession || inAfternoonSession) {
+        // 交易时段：每3分钟刷新
+        loadAnalysis(false, true)
+      } else if (inPostCloseWindow) {
+        // 盘后数据更新窗口：每3分钟刷新
+        loadAnalysis(false, true)
+      } else if (h >= 16 || (h === 15 && m >= 30)) {
+        // 盘后（16:00之后）：每30分钟刷新一次，捕获晚间公告/数据修订
         if (!lastRefreshTime.value || Date.now() - lastRefreshTime.value > 30 * 60 * 1000) {
           lastRefreshTime.value = Date.now()
           loadAnalysis(false, true)
         }
-      } else {
-        loadAnalysis(false, true)
       }
+      // 其他时段（0:00-9:15、11:30-13:00、16:00-24:00 非盘后窗口）：不刷新
     }, 3 * 60 * 1000)
   }
 
@@ -343,7 +417,7 @@ export function useStockData(selectedCode, investStyle) {
 
   return {
     klines, indicators, techSignals, fundamental, capitalFlow,
-    marginData, northboundData, mainForceFlow, shareholderData,
+    marginData, northboundData, mainForceFlow, sectorCapitalData, shareholderData, billboardData, holderIncreaseData,
     benchmarkKlines, klinePeriod,
     loading, error, loadErrors, dataTimestamp, lastRefreshTime,
     scoreResult,

@@ -142,30 +142,43 @@ const GROSS_MARGIN_THRESHOLDS = {
  * @returns {Object} { total, dimensions, suggestion, confidence, details }
  */
 const STYLE_WEIGHTS = {
-  short: { technical: 0.35, fundamental: 0.15, capital: 0.42, risk: 0.08 },
-  mid:   { technical: 0.30, fundamental: 0.26, capital: 0.32, risk: 0.12 },
-  long:  { technical: 0.22, fundamental: 0.40, capital: 0.20, risk: 0.18 },
+  short: { technical: 0.33, fundamental: 0.14, capital: 0.38, risk: 0.15 },
+  mid:   { technical: 0.28, fundamental: 0.26, capital: 0.30, risk: 0.16 },
+  long:  { technical: 0.20, fundamental: 0.38, capital: 0.22, risk: 0.20 },
 }
 
-export function calculateScore(techSignals = [], fundamental = null, capitalFlow = null, industry = '', style = 'short', riskItems = null) {
+export function calculateScore(techSignals = [], fundamental = null, capitalFlow = null, industry = '', style = 'short', riskItems = null, marketCtx = null) {
   const dimensions = {
     technical: { score: 0, max: 0, items: [] },  // max 由子项求和动态决定
-    fundamental: { score: 0, max: 42, items: [] },
-    capital: { score: 0, max: 29, items: [] },
-    risk: { score: 0, max: 15, items: [] }
+    fundamental: { score: 0, max: 0, items: [] },  // max 由子项求和动态决定
+    capital: { score: 0, max: 0, items: [] },   // max 由子项求和动态决定（日频≈42，季度降权后更小）
+    risk: { score: 0, max: 0, items: [] }  // max 由子项求和动态决定（5+5+4+4+3+3+3=27）
   }
 
-  // ========== 技术面评分 (0-40) ==========
+  // ========== 技术面评分 (0-42) ==========
   const tech = dimensions.technical
 
-  // 1. 均线排列 + 交叉 (0-10)
+  // 1. 均线排列 + 斜率 (0-10) — 均线斜率信息合并入描述，不再单独计分，避免趋势类因子重复计分
   const maBullish = techSignals.find(s => s.source === 'MA' && s.type === 'bullish')
   const maBearish = techSignals.find(s => s.source === 'MA' && s.type === 'bearish')
   const maCrosses = techSignals.filter(s => s.source === 'MA' && (s.text.includes('金叉') || s.text.includes('死叉')))
+  const slopeSignal = techSignals.find(s => s.source === '均线斜率')
+  // 斜率加成：强趋势±2，普通趋势±1
+  function slopeBonus() {
+    if (!slopeSignal) return { delta: 0, desc: '' }
+    const t = slopeSignal.text
+    if (t.includes('强趋势向上')) return { delta: 2, desc: '，强趋势' }
+    if (t.includes('趋势向上')) return { delta: 1, desc: '，趋势向上' }
+    if (t.includes('强趋势向下')) return { delta: -2, desc: '，强趋势向下' }
+    if (t.includes('趋势向下')) return { delta: -1, desc: '，趋势向下' }
+    return { delta: 0, desc: '' }
+  }
   if (maBullish?.text?.includes('多头排列')) {
-    tech.items.push({ name: '均线排列', score: 10, max: 10, desc: '多头排列' })
+    const sb = slopeBonus()
+    tech.items.push({ name: '均线排列', score: 10, max: 10, desc: '多头排列' + sb.desc })
   } else if (maBearish?.text?.includes('空头排列')) {
-    tech.items.push({ name: '均线排列', score: 0, max: 10, desc: '空头排列' })
+    const sb = slopeBonus()
+    tech.items.push({ name: '均线排列', score: 0, max: 10, desc: '空头排列' + sb.desc })
   } else if (maCrosses.length > 0) {
     // 多级别交叉按优先级评分：MA20/60 > MA10/20 > MA5/10
     let crossScore = 5, crossDesc = '中性'
@@ -182,9 +195,21 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     } else if (maCrosses.some(s => s.text.includes('MA5/10死叉'))) {
       crossScore = 4; crossDesc = maCrosses.find(s => s.text.includes('MA5/10死叉')).text
     }
-    tech.items.push({ name: '均线排列', score: crossScore, max: 10, desc: crossDesc })
+    const sb = slopeBonus()
+    // 斜率作为描述修饰，不影响分数（避免趋势信号重复计分）
+    tech.items.push({ name: '均线排列', score: Math.max(0, Math.min(10, crossScore)), max: 10, desc: crossDesc + sb.desc })
   } else {
-    tech.items.push({ name: '均线排列', score: 5, max: 10, desc: '中性' })
+    // 无排列无交叉：仅看斜率方向
+    let score = 5, desc = '中性'
+    if (slopeSignal) {
+      const t = slopeSignal.text
+      if (t.includes('强趋势向上')) { score = 7; desc = t }
+      else if (t.includes('趋势向上')) { score = 6; desc = t }
+      else if (t.includes('强趋势向下')) { score = 3; desc = t }
+      else if (t.includes('趋势向下')) { score = 4; desc = t }
+      else { desc = t }
+    }
+    tech.items.push({ name: '均线排列', score: score, max: 10, desc })
   }
 
   // 2. MACD 信号 (0-8) — 累加同源信号
@@ -220,7 +245,7 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   kdjScore = Math.max(0, Math.min(5, kdjScore))
   tech.items.push({ name: 'KDJ', score: kdjScore, max: 5, desc: kdjDescs.length ? kdjDescs.join('，') : '正常区间' })
 
-  // 4. RSI 信号 (0-7) — 共振优先，避免与单周期信号重复计分
+  // 4. RSI 信号 (0-5) — 共振优先，避免与单周期信号重复计分
   const rsiSignals = techSignals.filter(s => s.source === 'RSI')
   let rsiScore = 3
   const rsiDescs = []
@@ -280,19 +305,21 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   }
   tech.items.push({ name: 'BOLL', score: bollScore, max: 4, desc: bollDesc })
 
-  // 6. 均线斜率 (0-4) — MA20 趋势强度，衡量中期方向性
-  const slopeSignals = techSignals.filter(s => s.source === '均线斜率')
-  const slopeSignal = slopeSignals[0]
-  let slopeScore = 2
-  let slopeDesc = '中性'
-  if (slopeSignal) {
-    if (slopeSignal.text.includes('强趋势向上')) { slopeScore = 4; slopeDesc = slopeSignal.text }
-    else if (slopeSignal.text.includes('趋势向上')) { slopeScore = 3; slopeDesc = slopeSignal.text }
-    else if (slopeSignal.text.includes('横盘')) { slopeScore = 2; slopeDesc = slopeSignal.text }
-    else if (slopeSignal.text.includes('强趋势向下')) { slopeScore = 0; slopeDesc = slopeSignal.text }
-    else if (slopeSignal.text.includes('趋势向下')) { slopeScore = 1; slopeDesc = slopeSignal.text }
+  // 6. 短期反转 (0-4) — A股短线反转效应，5日涨幅极端时反向预示
+  // 与价格位置互补：价格位置看年度分位（中期），短期反转看5日涨幅（短期）
+  const reversalSignals = techSignals.filter(s => s.source === '短期反转')
+  const reversalSignal = reversalSignals[0]
+  let reversalScore = 2
+  let reversalDesc = '中性'
+  if (reversalSignal) {
+    const t = reversalSignal.text
+    if (t.includes('极度超跌')) { reversalScore = 4; reversalDesc = t }
+    else if (t.includes('超卖')) { reversalScore = 3; reversalDesc = t }
+    else if (t.includes('极度超买')) { reversalScore = 0; reversalDesc = t }
+    else if (t.includes('超买')) { reversalScore = 1; reversalDesc = t }
+    else { reversalDesc = t }
   }
-  tech.items.push({ name: '均线斜率', score: slopeScore, max: 4, desc: slopeDesc })
+  tech.items.push({ name: '短期反转', score: reversalScore, max: 4, desc: reversalDesc })
 
   // 7. 量能信号 (0-4) — 纯成交量强度，不结合价格方向，避免与资金面量价趋势重复计分
   const volStrSignals = techSignals.filter(s => s.source === '量能')
@@ -319,24 +346,24 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   }
   tech.items.push({ name: '量能', score: volStrScore, max: 4, desc: volStrDesc })
 
-  // 8. 价格位置 (0-3) — 年度高低位百分位，补足 RSI 覆盖不到的中期超买识别
+  // 8. 价格位置 (0-2) — 年度高低位百分位，补足 RSI 覆盖不到的中期超买识别
+  // 满分从3降为2，释放1分给短期反转因子（两者功能部分重叠）
+  // 评分映射：高位/偏高=0（风险），中性=1，偏低/低位=2（机会）
   const pricePosSignals = techSignals.filter(s => s.source === '价格位置')
   const pricePosSignal = pricePosSignals[0]
-  let pricePosScore = 2
+  let pricePosScore = 1
   let pricePosDesc = '中性'
   if (pricePosSignal) {
     const t = pricePosSignal.text
     if (t.includes('接近年度低位') || t.includes('价格位置偏低')) {
-      pricePosScore = 3; pricePosDesc = t
-    } else if (t.includes('价格位置中性偏上')) {
       pricePosScore = 2; pricePosDesc = t
-    } else if (t.includes('价格位置偏高')) {
+    } else if (t.includes('价格位置中性偏上')) {
       pricePosScore = 1; pricePosDesc = t
-    } else if (t.includes('接近年度高位')) {
+    } else if (t.includes('接近年度高位') || t.includes('价格位置偏高')) {
       pricePosScore = 0; pricePosDesc = t
     }
   }
-  tech.items.push({ name: '价格位置', score: pricePosScore, max: 3, desc: pricePosDesc })
+  tech.items.push({ name: '价格位置', score: pricePosScore, max: 2, desc: pricePosDesc })
 
   tech.score = tech.items.reduce((s, i) => s + i.score, 0)
   tech.max = tech.items.reduce((s, i) => s + i.max, 0)
@@ -382,29 +409,52 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     // 东方财富 ROEJQ 字段本身就是报告期加权 ROE，无需再年化
     const roe = latest.roe
 
-    // 1. PE 估值 (0-8)
+    // 1. PE 估值 (0-8) — 行业感知 + 利率环境调节
     if (latest.pe != null) {
-      const t = getPEThresholds(industry)
+      const t = adjustThresholdByRate(getPEThresholds(industry), marketCtx?.bondYield10y)
       const pe = latest.pe
       const midPE = Math.round((t.fair * 2 + t.high) / 3)
+      const rateSuffix = marketCtx?.bondYield10y != null ? `（10Y国债${marketCtx.bondYield10y.toFixed(2)}%）` : ''
       if (pe < 0) {
         fund.items.push({ name: 'PE估值', score: 0, max: 8, desc: `PE ${pe.toFixed(1)}，亏损` })
       } else if (pe <= t.low) {
-        fund.items.push({ name: 'PE估值', score: 8, max: 8, desc: `PE ${pe.toFixed(1)}，低估` })
+        fund.items.push({ name: 'PE估值', score: 8, max: 8, desc: `PE ${pe.toFixed(1)}，低估${rateSuffix}` })
       } else if (pe <= t.fair) {
-        fund.items.push({ name: 'PE估值', score: 6, max: 8, desc: `PE ${pe.toFixed(1)}，合理` })
+        fund.items.push({ name: 'PE估值', score: 6, max: 8, desc: `PE ${pe.toFixed(1)}，合理${rateSuffix}` })
       } else if (pe <= midPE) {
-        fund.items.push({ name: 'PE估值', score: 4, max: 8, desc: `PE ${pe.toFixed(1)}，略高` })
+        fund.items.push({ name: 'PE估值', score: 4, max: 8, desc: `PE ${pe.toFixed(1)}，略高${rateSuffix}` })
       } else if (pe <= t.high) {
-        fund.items.push({ name: 'PE估值', score: 2, max: 8, desc: `PE ${pe.toFixed(1)}，偏高` })
+        fund.items.push({ name: 'PE估值', score: 2, max: 8, desc: `PE ${pe.toFixed(1)}，偏高${rateSuffix}` })
       } else {
-        fund.items.push({ name: 'PE估值', score: 1, max: 8, desc: `PE ${pe.toFixed(1)}，高估` })
+        fund.items.push({ name: 'PE估值', score: 1, max: 8, desc: `PE ${pe.toFixed(1)}，高估${rateSuffix}` })
       }
     } else {
       fund.items.push({ name: 'PE估值', ...FUND_MISSING.PE, desc: '暂无数据' })
     }
 
-    // 2. ROE (0-8) — 直接使用后端返回值，不做年化
+    // 2. PB 估值 (0-4) — 行业感知 + 利率环境调节
+    if (latest.pb != null) {
+      const t = adjustThresholdByRate(getPBThresholds(industry || latest.industry || ''), marketCtx?.bondYield10y)
+      const pb = latest.pb
+      const midPB = +((t.fair * 2 + t.high) / 3).toFixed(2)
+      if (pb <= 0) {
+        fund.items.push({ name: 'PB估值', score: 0, max: 4, desc: `PB ${pb.toFixed(1)}，破净异常` })
+      } else if (pb <= t.low) {
+        fund.items.push({ name: 'PB估值', score: 4, max: 4, desc: `PB ${pb.toFixed(1)}，低估` })
+      } else if (pb <= t.fair) {
+        fund.items.push({ name: 'PB估值', score: 3, max: 4, desc: `PB ${pb.toFixed(1)}，合理` })
+      } else if (pb <= midPB) {
+        fund.items.push({ name: 'PB估值', score: 2, max: 4, desc: `PB ${pb.toFixed(1)}，略高` })
+      } else if (pb <= t.high) {
+        fund.items.push({ name: 'PB估值', score: 1, max: 4, desc: `PB ${pb.toFixed(1)}，偏高` })
+      } else {
+        fund.items.push({ name: 'PB估值', score: 0, max: 4, desc: `PB ${pb.toFixed(1)}，高估` })
+      }
+    } else {
+      fund.items.push({ name: 'PB估值', ...FUND_MISSING.PB, desc: '暂无数据' })
+    }
+
+    // 3. ROE (0-8) — 直接使用后端返回值，不做年化
     if (roe != null) {
       if (roe < 0) {
         fund.items.push({ name: 'ROE', score: 0, max: 8, desc: `ROE ${roe.toFixed(1)}%，亏损` })
@@ -475,29 +525,7 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
       fund.items.push({ name: '负债率', ...FUND_MISSING.debt, desc: '暂无数据' })
     }
 
-    // 6. PB 估值 (0-4) — 行业感知
-    if (latest.pb != null) {
-      const t = getPBThresholds(industry || latest.industry || '')
-      const pb = latest.pb
-      const midPB = +((t.fair * 2 + t.high) / 3).toFixed(2)
-      if (pb <= 0) {
-        fund.items.push({ name: 'PB估值', score: 0, max: 4, desc: `PB ${pb.toFixed(1)}，破净异常` })
-      } else if (pb <= t.low) {
-        fund.items.push({ name: 'PB估值', score: 4, max: 4, desc: `PB ${pb.toFixed(1)}，低估` })
-      } else if (pb <= t.fair) {
-        fund.items.push({ name: 'PB估值', score: 3, max: 4, desc: `PB ${pb.toFixed(1)}，合理` })
-      } else if (pb <= midPB) {
-        fund.items.push({ name: 'PB估值', score: 2, max: 4, desc: `PB ${pb.toFixed(1)}，略高` })
-      } else if (pb <= t.high) {
-        fund.items.push({ name: 'PB估值', score: 1, max: 4, desc: `PB ${pb.toFixed(1)}，偏高` })
-      } else {
-        fund.items.push({ name: 'PB估值', score: 0, max: 4, desc: `PB ${pb.toFixed(1)}，高估` })
-      }
-    } else {
-      fund.items.push({ name: 'PB估值', ...FUND_MISSING.PB, desc: '暂无数据' })
-    }
-
-    // 7. 现金流质量 (0-4) — 每股经营现金流/每股收益
+    // 6. 现金流质量 (0-4) — 每股经营现金流/每股收益
     if (latest.ocfToProfitRatio != null) {
       const ratio = latest.ocfToProfitRatio
       const r = ratio.toFixed(2)
@@ -551,6 +579,7 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   }
 
   fund.score = fund.items.reduce((s, i) => s + i.score, 0)
+  fund.max = fund.items.reduce((s, i) => s + i.max, 0)
 
   // ========== 资金面评分 ==========
   const cap = dimensions.capital
@@ -653,7 +682,9 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     }
 
     // 市值归一化：小盘股主力资金信号易受操控，按市值打折
-    const marketCap = fundamental?.latest?.totalMarketCap  // 单位：亿元
+    // 服务端 totalMarketCap 单位为元，归一化公式以亿元为基准，需转换
+    const marketCapYuan = fundamental?.latest?.totalMarketCap
+    const marketCap = marketCapYuan != null ? marketCapYuan / 1e8 : null  // 转换为亿元
     let capScale = 0.7  // 无市值数据时的默认折扣
     if (marketCap != null && marketCap > 0) {
       capScale = Math.min(1, Math.log10(Math.max(1, marketCap) / 50) / 1.5)
@@ -783,19 +814,98 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     cap.items.push({ name: '筹码趋势', score: Math.round(shMax * 0.4), max: shMax, desc: '暂无数据' })
   }
 
+  // 资金-价格背离评分 (0-5) — 主力资金方向 vs 股价方向交叉验证，独立于「主力资金」因子
+  // 判定逻辑与诊断卡片（getCapitalConclusion）共用 evalCapitalPriceDivergence，确保口径一致
+  const divLatest = capitalFlow?._mainForceLatest
+  if (divLatest?.mainNetPct != null && divLatest?.changePct != null) {
+    const r = evalCapitalPriceDivergence(divLatest.mainNetPct, divLatest.changePct)
+    cap.items.push({ name: '资金背离', score: r.score, max: 5, desc: r.desc })
+  } else {
+    cap.items.push({ name: '资金背离', score: 3, max: 5, desc: '暂无数据' })
+  }
+
+  // 龙虎榜评分 (0-4) — 事件型因子：取近 10 日上榜记录，按席位性质评分
+  // 机构净买入=强正向；机构净卖出=负向；游资接力=短线博弈；普通席位按净额方向
+  // 非近期上榜视为无事件，给中位分（不系统性抬高基线）
+  const bbSummary = capitalFlow?._billboardSummary
+  const bbMax = 4
+  if (bbSummary && bbSummary.recentCount > 0 && bbSummary.daysAgo <= 10) {
+    let bbScore = 2
+    let bbDesc = ''
+    const netStr = `净额${bbSummary.netSumYi}亿`
+    if (bbSummary.instNet > 0) {
+      bbScore = 4; bbDesc = `龙虎榜机构净买入（${bbSummary.instBuyTotal}买/${bbSummary.instSellTotal}卖，${netStr}）`
+    } else if (bbSummary.instNet < 0) {
+      bbScore = 0; bbDesc = `龙虎榜机构净卖出（${bbSummary.instBuyTotal}买/${bbSummary.instSellTotal}卖，${netStr}）`
+    } else if (bbSummary.hasHotMoney) {
+      bbScore = 3; bbDesc = `龙虎榜游资活跃，短线博弈（${netStr}）`
+    } else if (bbSummary.netSumYi > 0) {
+      bbScore = 3; bbDesc = `龙虎榜净买入（${netStr}）`
+    } else if (bbSummary.netSumYi < 0) {
+      bbScore = 1; bbDesc = `龙虎榜净卖出（${netStr}）`
+    } else {
+      bbScore = 2; bbDesc = '龙虎榜上榜，资金均衡'
+    }
+    cap.items.push({ name: '龙虎榜', score: bbScore, max: bbMax, desc: bbDesc })
+  } else {
+    // 无事件：中性给中分，不产生方向性影响
+    cap.items.push({ name: '龙虎榜', score: Math.round(bbMax * 0.4), max: bbMax, desc: '近期未上龙虎榜' })
+  }
+
+  // 增减持（董监高/大股东口径）评分 (0-4) — 事件型因子
+  // 仅计重要内部人（服务端已剔除员工持股/私募等金融产品与普通小股东）。
+  // 判定优先级：
+  //   1) 控股股东/实控人减持（180天内）= 结构性看空，无论近期是否有其它交易，直接封顶扣分（强警示）
+  //   2) 近90天净额方向：净增持=正向，净减持=负向
+  //   3) 近期无内部人交易视为无事件，给中位分（不系统性抬高基线，与龙虎榜口径一致）
+  const hiSummary = capitalFlow?._holderIncreaseSummary
+  const hiMax = 4
+  if (hiSummary?.hasControllingReduce) {
+    let hiDesc = `控股股东/实控人减持（${hiSummary.controllingReduceDaysAgo}天前，结构性看空）`
+    if (hiSummary.recentCount > 0) {
+      const net = hiSummary.netChangeRate ?? 0
+      hiDesc += `；近90天净${net >= 0 ? '增持' : '减持'}${Math.abs(net)}%`
+    }
+    cap.items.push({ name: '增减持', score: 0, max: hiMax, desc: hiDesc })
+  } else if (hiSummary && hiSummary.recentCount > 0) {
+    let hiScore = 2
+    let hiDesc = ''
+    const net = hiSummary.netChangeRate ?? 0   // 正=净增持，负=净减持（占流通比%）
+    const absNet = Math.abs(net)
+    if (net >= 2) { hiScore = 4; hiDesc = `董监高/大股东净增持${absNet}%（内部人看好）` }
+    else if (net > 0) { hiScore = 3; hiDesc = `董监高/大股东净增持${absNet}%` }
+    else if (net === 0) { hiScore = 2; hiDesc = `董监高/大股东增减持互抵（${hiSummary.increaseCount}增${hiSummary.reduceCount}减）` }
+    else if (net > -2) { hiScore = 1; hiDesc = `董监高/大股东净减持${absNet}%` }
+    else { hiScore = 0; hiDesc = `董监高/大股东净减持${absNet}%（内部人看空）` }
+    cap.items.push({ name: '增减持', score: hiScore, max: hiMax, desc: hiDesc })
+  } else if (hiSummary) {
+    // 已查询但近期无内部人交易：中性给中分，不产生方向性影响
+    cap.items.push({ name: '增减持', score: Math.round(hiMax * 0.4), max: hiMax, desc: '近90天无董监高/大股东增减持' })
+  } else {
+    // 数据缺失时同样给中分，避免惩罚数据不全的股票
+    cap.items.push({ name: '增减持', score: Math.round(hiMax * 0.4), max: hiMax, desc: '暂无数据' })
+  }
+
   cap.score = cap.items.reduce((s, i) => s + i.score, 0)
   cap.max = cap.items.reduce((s, i) => s + i.max, 0)
 
-  // ========== 风险面评分 (0-15) ==========
+  // 资金面共振系数：个股主力资金 ↔ 所属板块主力资金 跨层级对齐（乘性，钳位 max）
+  applyCapitalResonance(cap, capitalFlow)
+
+  // ========== 风险面评分 ==========
   const risk = dimensions.risk
   if (riskItems && riskItems.length) {
     risk.items = riskItems
   } else {
-    // 无风险数据时给中间分，权重归零
+    // 无风险数据时给低占位分，权重归零
     risk.items = [
-      { name: 'Sharpe', score: 3, max: 5, desc: '暂无数据' },
-      { name: '最大回撤', score: 3, max: 5, desc: '暂无数据' },
-      { name: 'Beta', score: 3, max: 5, desc: '暂无数据' },
+      { name: 'Sharpe', score: 2, max: 5, desc: '暂无数据' },
+      { name: '最大回撤', score: 2, max: 5, desc: '暂无数据' },
+      { name: 'Beta', score: 2, max: 4, desc: '暂无数据' },
+      { name: '流动性', score: 2, max: 4, desc: '暂无数据' },
+      { name: '财务健康度', score: 2, max: 3, desc: '暂无数据' },
+      { name: '股权质押', score: 2, max: 3, desc: '暂无数据' },
+      { name: '商誉', score: 2, max: 3, desc: '暂无数据' },
     ]
   }
   risk.score = risk.items.reduce((s, i) => s + i.score, 0)
@@ -803,7 +913,11 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
 
   // ========== 动态权重合成 ==========
   const hasFundData = !!fundamental?.latest && Object.values(fundamental.latest).some(v => v != null && typeof v === 'number')
-  const hasRiskData = riskItems && riskItems.length > 0
+  // 风险项占位判定：剔除"暂无数据/数据不足/无基准数据"，与置信度口径保持一致。
+  // riskMetrics 在数据缺失时仍会返回 score=3 的占位项；若仅凭 riskItems.length 判定，
+  // 会把占位当作真实数据纳入风险权重，系统性抬高总分（与"无风险数据→权重归零"的意图相悖）。
+  const isRiskPlaceholder = (i) => !i.desc || i.desc.includes('暂无数据') || i.desc.includes('数据不足') || i.desc.includes('无基准数据')
+  const hasRiskData = riskItems ? riskItems.some(i => !isRiskPlaceholder(i)) : false
   const baseWeights = STYLE_WEIGHTS[style] || STYLE_WEIGHTS.mid
 
   let weights
@@ -812,18 +926,18 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   } else if (hasFundData) {
     // 无风险数据：风险权重归零，分配给技术和资金面
     const styleFallback = {
-      short: { technical: 0.38, fundamental: 0.15, capital: 0.47 },
-      mid:   { technical: 0.35, fundamental: 0.26, capital: 0.39 },
-      long:  { technical: 0.26, fundamental: 0.40, capital: 0.34 },
+      short: { technical: 0.36, fundamental: 0.14, capital: 0.50 },
+      mid:   { technical: 0.33, fundamental: 0.26, capital: 0.41 },
+      long:  { technical: 0.25, fundamental: 0.38, capital: 0.37 },
     }
     const fb = styleFallback[style] || styleFallback.mid
     weights = { technical: fb.technical, fundamental: fb.fundamental, capital: fb.capital, risk: 0 }
   } else if (hasRiskData) {
     // 无基本面数据：基本面权重分配给技术、资金和风险
     const styleFallback = {
-      short: { technical: 0.40, capital: 0.52, risk: 0.08 },
-      mid:   { technical: 0.42, capital: 0.46, risk: 0.12 },
-      long:  { technical: 0.42, capital: 0.40, risk: 0.18 },
+      short: { technical: 0.38, capital: 0.47, risk: 0.15 },
+      mid:   { technical: 0.38, capital: 0.46, risk: 0.16 },
+      long:  { technical: 0.38, capital: 0.42, risk: 0.20 },
     }
     const fb = styleFallback[style] || styleFallback.mid
     weights = { technical: fb.technical, fundamental: 0, capital: fb.capital, risk: fb.risk }
@@ -849,7 +963,7 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   // 置信度 — 根据数据完整度分四档
   const fundDataCount = fund.items.filter(i => !i.desc.includes('暂无数据')).length
   const capDataCount = cap.items.filter(i => !i.desc.includes('暂无数据')).length
-  const riskDataCount = risk.items.filter(i => !i.desc.includes('暂无数据') && !i.desc.includes('数据不足') && !i.desc.includes('无基准数据')).length
+  const riskDataCount = risk.items.filter(i => !isRiskPlaceholder(i)).length
   const techDataCount = tech.items.length
   const totalDataPoints = fundDataCount + capDataCount + riskDataCount + techDataCount
   let confidence, confidenceStars
@@ -870,19 +984,22 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   const techPct = tech.score / tech.max
   const capPct = cap.score / cap.max
   const capitalBullish = capPct >= 0.65
-  const capitalBearish = capPct <= 0.35
+  const capitalBearish = capPct <= 0.40
 
   // 冲突检测辅助：提取估值状态
   const peItem = fund.items.find(i => i.name === 'PE估值')
-  const peOvervalued = peItem && peItem.score <= 2   // 偏高/高估/亏损
+  const peLoss = peItem && peItem.score === 0 && peItem.desc?.includes('亏损')  // PE<0 亏损
+  const peOvervalued = peItem && peItem.score <= 2 && !peLoss   // 偏高/高估（不含亏损）
   const peUndervalued = peItem && peItem.score >= 6   // 低估/合理
-  const peMatch = peItem?.desc?.match(/PE\s*([\d.]+)/)
+  const peMatch = peItem?.desc?.match(/PE\s*([-\d.]+)/)
   const peValue = peMatch ? peMatch[1] : ''
   const fundPct = fund.score / fund.max
 
   if (total >= 70) {
     if (style === 'short') {
-      if (peOvervalued && (capitalBullish || bullishCount >= 3)) {
+      if (peLoss && (capitalBullish || bullishCount >= 3)) {
+        suggestion = '趋势偏强但公司亏损，纯短线博弈，严格止损'
+      } else if (peOvervalued && (capitalBullish || bullishCount >= 3)) {
         suggestion = peValue
           ? `趋势偏强但PE已达${peValue}倍（估值偏高），短线博弈为主，严格止损`
           : '趋势偏强但估值偏高，短线博弈为主，严格止损'
@@ -896,6 +1013,8 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     } else if (style === 'long') {
       if (fundPct >= 0.65) {
         suggestion = '基本面扎实，适合长线布局'
+      } else if (peLoss) {
+        suggestion = '公司亏损，不适合长线持有'
       } else if (peOvervalued) {
         suggestion = peValue
           ? `综合偏强，但PE ${peValue}倍估值偏高，长线需关注业绩消化`
@@ -904,7 +1023,9 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
         suggestion = '综合偏强，但基本面支撑一般'
       }
     } else {
-      if (peOvervalued && bullishCount >= 4) {
+      if (peLoss && bullishCount >= 4) {
+        suggestion = '多头强势但公司亏损，中线风险大，不宜重仓'
+      } else if (peOvervalued && bullishCount >= 4) {
         suggestion = peValue
           ? `多头强势但PE ${peValue}倍估值偏高，中线宜轻仓`
           : '多头强势但估值偏高，中线宜轻仓'
@@ -931,7 +1052,11 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
         : '风险指标不佳，长线需谨慎'
     } else if (techStrong && capStrong) {
       // 技术强 + 资金强 — 检查估值是否冲突
-      if (peOvervalued) {
+      if (peLoss) {
+        suggestion = riskWeak
+          ? '趋势向好但公司亏损且波动大，高风险博弈'
+          : '趋势+资金共振，但公司亏损，注意基本面风险'
+      } else if (peOvervalued) {
         suggestion = riskWeak
           ? (peValue ? `趋势向好但PE ${peValue}倍偏高且波动大，高位博弈风险高` : '趋势向好但估值偏高且波动大，高位博弈风险高')
           : (peValue ? `趋势+资金共振，但PE ${peValue}倍估值偏高，注意高位风险` : '趋势+资金共振，但估值偏高，注意高位风险')
@@ -940,14 +1065,15 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
           ? '趋势向好，注意高位风险'
           : '偏多格局，可逢低关注'
       }
+    } else if (techStrong && riskWeak) {
+      // 趋势向上但波动风险较大 — 放在 techStrong 链首，避免被下方 !capStrong 分支抢先吞掉
+      suggestion = '趋势向上但波动风险较大，注意仓位'
     } else if (techStrong && !capStrong) {
       suggestion = bullishCount >= 4
         ? '技术面强势，但资金未有效配合'
         : '技术偏强，资金面待验证'
     } else if (!techStrong && capStrong) {
       suggestion = '资金面偏强，等待技术面确认'
-    } else if (techStrong && riskWeak) {
-      suggestion = '趋势向上但波动风险较大，注意仓位'
     } else if (fundPct >= 0.65 && techPct < 0.50 && style === 'long') {
       // 基本面强但技术面弱的长线场景 — 提示等待确认
       suggestion = '基本面扎实但趋势未确认，等待技术面企稳后布局'
@@ -998,7 +1124,7 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     dimensions: {
       technical: { score: tech.score, max: tech.max, pct: Math.round(safeDiv(tech.score, tech.max) * 100) },
       fundamental: { score: fund.score, max: fund.max, pct: Math.round(safeDiv(fund.score, fund.max) * 100) },
-      capital: { score: cap.score, max: cap.max, pct: Math.round(safeDiv(cap.score, cap.max) * 100) },
+      capital: { score: cap.score, max: cap.max, pct: Math.round(safeDiv(cap.score, cap.max) * 100), resonance: cap.resonance || null, resonanceDesc: cap.resonanceDesc || null, resonanceCoef: cap.resonanceCoef ?? null },
       risk: { score: risk.score, max: risk.max, pct: Math.round(safeDiv(risk.score, risk.max) * 100) }
     },
     suggestion,
@@ -1075,6 +1201,26 @@ export function getPBThresholds(industry) {
   return (key && PB_THRESHOLDS[key]) ? PB_THRESHOLDS[key] : PB_THRESHOLDS.default
 }
 
+/**
+ * 利率环境调节估值阈值
+ * 基于DDM折现模型：无风险利率越低，合理估值越高；利率越高，合理估值越低
+ * 基准利率3.5%（PE_THRESHOLDS的隐含基准），调节范围限制在[0.8, 1.3]防止极端值
+ * @param {Object} baseThreshold - { low, fair, high }
+ * @param {number|null} bondYield10y - 10年期国债收益率（%），null时返回原阈值
+ * @returns {Object} 调节后的 { low, fair, high }
+ */
+export function adjustThresholdByRate(baseThreshold, bondYield10y) {
+  if (bondYield10y == null || bondYield10y <= 0 || !baseThreshold) return baseThreshold
+  const BASE_RATE = 3.5
+  const ratio = BASE_RATE / bondYield10y
+  const adjustedRatio = Math.max(0.8, Math.min(1.3, ratio))
+  return {
+    low: +(baseThreshold.low * adjustedRatio).toFixed(1),
+    fair: +(baseThreshold.fair * adjustedRatio).toFixed(1),
+    high: +(baseThreshold.high * adjustedRatio).toFixed(1)
+  }
+}
+
 // 负债率行业分档辅助
 export function getDebtThresholds(industry) {
   const key = matchIndustryKey(industry)
@@ -1104,12 +1250,12 @@ export function getTrendConclusion(signals = []) {
 /**
  * 获取估值结论（用于诊断区卡片）
  */
-export function getValuationConclusion(fundamental) {
+export function getValuationConclusion(fundamental, marketCtx = null) {
   const latest = fundamental?.latest
   if (!latest || latest.pe == null) return { text: '暂无数据', color: '#64748b', icon: '?' }
 
   const industry = latest.industry || ''
-  const t = getPEThresholds(industry)
+  const t = adjustThresholdByRate(getPEThresholds(industry), marketCtx?.bondYield10y)
   const pe = latest.pe
   if (pe < 0) return { text: '亏损', color: '#ff453a', icon: '✗' }
   if (pe <= t.low) return { text: '低估', color: '#30d158', icon: '✓' }
@@ -1121,36 +1267,173 @@ export function getValuationConclusion(fundamental) {
 }
 
 /**
+ * 资金面共振 — 个股主力资金方向 vs 所属板块主力资金方向的跨层级对齐。
+ * 与「资金-价格背离」(evalCapitalPriceDivergence) 正交：背离看个股"资金vs价格"(垂直)，
+ * 共振看个股"资金vs板块资金"(横向)。与「主力资金」子项不重复：后者只评个股自身资金强弱，
+ * 本因子用乘性系数对整个资金维度做板块上下文加成，不新增满分子项。
+ *
+ * 方向阈值 ±0.5%，沿用「主力进出持平」既有口径保持一致；强度分阈值 ±2%。
+ *
+ * @param {number} stockPct 个股主力净占比 %（mainNetPct）
+ * @param {number|null} sectorPct 板块主力净占比 %（f184，可能缺省）
+ * @returns {{coef:number, label:string, desc:string}} coef 资金维度乘性系数；label/desc 供诊断与UI
+ */
+function evalCapitalResonance(stockPct, sectorPct) {
+  // 板块层缺省 → 共振信号不成立，纯中性，不加成不衰减（保证缺失数据不系统性拖低分）
+  if (sectorPct == null || typeof sectorPct !== 'number' || !isFinite(sectorPct)) {
+    return { coef: 1.0, label: '', desc: '' }
+  }
+  const dir = p => (p == null || !isFinite(p)) ? 'flat' : (p > 0.5 ? 'in' : (p < -0.5 ? 'out' : 'flat'))
+  const ds = dir(stockPct), db = dir(sectorPct)
+  const strong = (p) => Math.abs(p) >= 2
+  // 弱方向：方向成立但强度不足0.5%（几乎持平），共振系数打折
+  const weakDir = (p) => Math.abs(p) > 0.5 && Math.abs(p) < 1
+
+  // 两层同向
+  if (ds === 'in' && db === 'in') {
+    const strongBoth = strong(stockPct) && strong(sectorPct)
+    const weakStock = weakDir(stockPct)  // 个股方向弱，共振打折
+    const coef = strongBoth ? 1.12 : (weakStock ? 1.03 : 1.08)
+    return {
+      coef,
+      label: '资金多头共振',
+      desc: strongBoth
+        ? `个股主力净占比 ${stockPct.toFixed(1)}% 与板块 ${sectorPct.toFixed(1)}% 同向大幅流入，资金面强共振`
+        : `个股主力净占比 ${stockPct.toFixed(1)}% 与板块 ${sectorPct.toFixed(1)}% 同向流入`
+    }
+  }
+  if (ds === 'out' && db === 'out') {
+    const strongBoth = strong(stockPct) && strong(sectorPct)
+    const weakStock = weakDir(stockPct)  // 个股方向弱，共振打折
+    const coef = strongBoth ? 0.86 : (weakStock ? 0.97 : 0.92)
+    return {
+      coef,
+      label: '资金空头共振',
+      desc: strongBoth
+        ? `个股主力净占比 ${stockPct.toFixed(1)}% 与板块 ${sectorPct.toFixed(1)}% 同向大幅流出，资金面共振走弱`
+        : `个股主力净占比 ${stockPct.toFixed(1)}% 与板块 ${sectorPct.toFixed(1)}% 同向流出`
+    }
+  }
+  // 逆势：个股方向与板块相反 → 逆势打折（即便个股主力子项本身分高，逆板块难持续）
+  if (ds === 'in' && db === 'out') {
+    return {
+      coef: 0.96,
+      label: '个股逆势偏强',
+      desc: `个股主力净流入 ${stockPct.toFixed(1)}% 但板块净流出 ${sectorPct.toFixed(1)}%，逆板块资金，持续性存疑`
+    }
+  }
+  if (ds === 'out' && db === 'in') {
+    return {
+      coef: 0.94,
+      label: '个股逆势偏弱',
+      desc: `个股主力净流出 ${stockPct.toFixed(1)}% 但板块净流入 ${sectorPct.toFixed(1)}%，资金跑输板块`
+    }
+  }
+  // 至少一层中性 → 共振不成立
+  return { coef: 1.0, label: '', desc: '' }
+}
+
+/**
+ * 应用资金面共振系数到资金维度（乘性，钳位 max），镜像技术面 P1 共振的结构。
+ * 在所有资金子项汇总为 cap.score 之后调用。
+ */
+function applyCapitalResonance(cap, capitalFlow) {
+  const stockPct = capitalFlow?._mainForceLatest?.mainNetPct
+  const sectorPct = capitalFlow?._sectorCapital?.mainNetPct
+  if (stockPct == null) return  // 个股主力缺数据 → 不做共振
+  const { coef, label, desc } = evalCapitalResonance(stockPct, sectorPct)
+  if (label) {
+    cap.resonance = label
+    cap.resonanceDesc = desc
+    cap.resonanceCoef = coef
+  }
+  if (coef !== 1.0 && cap.max > 0) {
+    cap.score = Math.round(cap.score * coef)
+    cap.score = Math.max(0, Math.min(cap.max, cap.score))  // 钳位
+  }
+}
+
+/**
+ * 资金面共振结论（供 UI 面板复用，与评分引擎 getCapitalConclusion 同源）
+ * @returns {{label:string, desc:string, coef:number, stockPct:number|null, sectorPct:number|null}}
+ */
+export function getCapitalResonance(capitalFlow) {
+  const stockPct = capitalFlow?._mainForceLatest?.mainNetPct ?? null
+  const sectorPct = capitalFlow?._sectorCapital?.mainNetPct ?? null
+  if (stockPct == null) return { label: '', desc: '', coef: 1.0, stockPct: null, sectorPct }
+  const r = evalCapitalResonance(stockPct, sectorPct)
+  return { ...r, stockPct, sectorPct }
+}
+
+/**
+ * 资金-价格背离判定 — 主力资金方向(mainNetPct) vs 股价方向(changePct) 的交叉验证。
+ * 独立于「主力资金」因子：后者只看资金方向，本因子捕捉资金与价格打架的反常信号。
+ *
+ * 为什么不用「大小单背离」：东方财富四档口径下主力(超大单+大单)与散户(中单+小单)
+ * 净流入守恒（和≈0），故大小单背离度 ≈ 2×主力占比，与 mainNetPct 线性重复，无独立 alpha。
+ * 资金-价格背离才是真空地带：吸筹(资金进+价滞跌)、诱多(资金出+价涨)。
+ *
+ * @param {number} dp 主力净占比 %
+ * @param {number} dc 当日涨跌幅 %
+ * @returns {{score:number, desc:string, tag:string|null}} score 满分5；tag 供诊断卡片追加（吸筹/蓄势/诱多），共振与中性为 null
+ */
+function evalCapitalPriceDivergence(dp, dc) {
+  if (dp > 3 && dc < 0) return { score: 5, desc: '主力吸筹（资金大幅流入但股价下跌）', tag: '吸筹' }
+  if (dp < -3 && dc > 0) return { score: 0, desc: '主力拉高出货（资金大幅流出但股价上涨）', tag: '诱多' }
+  if (dp > 1 && dc < 0.3) return { score: 4, desc: '资金流入股价滞涨，疑似蓄势', tag: '蓄势' }
+  if (dp < -1 && dc > -0.3) return { score: 1, desc: '资金流出股价偏强，警惕诱多出货', tag: '诱多' }
+  if (dp > 1 && dc >= 0.3) return { score: 4, desc: '资金与价格共振走强', tag: null }
+  if (dp < -1 && dc <= -0.3) return { score: 1, desc: '资金与价格共振走弱', tag: null }
+  return { score: 3, desc: '资金价格同步', tag: null }  // 主力净占比 ∈ [-1,1] 视为资金中性
+}
+
+/**
  * 获取资金结论（用于诊断区卡片）
- * 使用与评分引擎一致的 combinedPct 加权公式
+ * 主结论基于 combinedPct 加权；若存在资金-价格背离，追加 吸筹/蓄势/诱多 标注。
  */
 export function getCapitalConclusion(capitalFlow) {
   const signal = capitalFlow?.priceVolumeSignal
   const mfLatest = capitalFlow?._mainForceLatest
   const mfSummary = capitalFlow?._mainForceSummary
 
+  // 资金-价格背离标注（与评分引擎同源判定，确保口径一致）
+  const divTag = (mfLatest?.mainNetPct != null && mfLatest?.changePct != null)
+    ? evalCapitalPriceDivergence(mfLatest.mainNetPct, mfLatest.changePct).tag
+    : null
+
   if (!signal && !mfLatest) return { text: '暂无数据', color: '#64748b', icon: '?' }
 
+  let result
   // 使用与评分引擎一致的 50/50 加权公式
   if (mfLatest?.mainNetPct != null) {
     const todayPct = mfLatest.mainNetPct ?? 0
     const avg5Pct = mfSummary?.mainNetAvgPct5 ?? 0
     let combinedPct = todayPct * 0.5 + avg5Pct * 0.5
     if (isNaN(combinedPct)) combinedPct = 0
-    if (combinedPct > 2) return { text: '主力流入', color: '#30d158', icon: '↑' }
-    if (combinedPct > 0.3) return { text: '温和流入', color: '#30d158', icon: '↑' }
-    if (combinedPct >= -0.3) return { text: '平稳', color: '#ffd60a', icon: '→' }
-    if (combinedPct >= -2) return { text: '温和流出', color: '#ffd60a', icon: '→' }
-    return { text: '主力流出', color: '#ff453a', icon: '↓' }
+    if (combinedPct > 2) result = { text: '主力流入', color: '#30d158', icon: '↑' }
+    else if (combinedPct > 0.3) result = { text: '温和流入', color: '#30d158', icon: '↑' }
+    else if (combinedPct >= -0.3) result = { text: '平稳', color: '#ffd60a', icon: '→' }
+    else if (combinedPct >= -2) result = { text: '温和流出', color: '#ffd60a', icon: '→' }
+    else result = { text: '主力流出', color: '#ff453a', icon: '↓' }
+  } else if (signal) {
+    if (signal === '放量上涨') result = { text: '资金流入', color: '#30d158', icon: '↑' }
+    else if (signal === '温和上涨') result = { text: '温和流入', color: '#30d158', icon: '↑' }
+    else if (signal === '缩量回调（洗盘）' || signal === '缩量整理（蓄势）') result = { text: '缩量整理', color: '#ffd60a', icon: '→' }
+    else if (signal === '放量下跌') result = { text: '资金流出', color: '#ff453a', icon: '↓' }
+    else if (signal.includes('缩量下跌') || signal.includes('弱势')) result = { text: '缩量流出', color: '#ff453a', icon: '↓' }
+    else if (signal.includes('缩量调整')) result = { text: '缩量整理', color: '#ffd60a', icon: '→' }
+    else result = { text: '平稳', color: '#ffd60a', icon: '→' }
+  } else {
+    result = { text: '暂无数据', color: '#64748b', icon: '?' }
   }
 
-  if (!signal) return { text: '暂无数据', color: '#64748b', icon: '?' }
-
-  if (signal === '放量上涨') return { text: '资金流入', color: '#30d158', icon: '↑' }
-  if (signal === '温和上涨') return { text: '温和流入', color: '#30d158', icon: '↑' }
-  if (signal === '缩量回调（洗盘）' || signal === '缩量整理（蓄势）') return { text: '缩量整理', color: '#ffd60a', icon: '→' }
-  if (signal === '放量下跌') return { text: '资金流出', color: '#ff453a', icon: '↓' }
-  if (signal.includes('缩量下跌') || signal.includes('弱势')) return { text: '缩量流出', color: '#ff453a', icon: '↓' }
-  if (signal.includes('缩量调整')) return { text: '缩量整理', color: '#ffd60a', icon: '→' }
-  return { text: '平稳', color: '#ffd60a', icon: '→' }
+  // 背离标注追加到结论（吸筹蓄势 / 诱多出货），共振与中性不追加
+  if (divTag) result.text += ` · ${divTag}`
+  // 资金共振标注（与评分引擎 evalCapitalResonance 同源判定，确保口径一致）
+  const resonance = evalCapitalResonance(mfLatest?.mainNetPct, capitalFlow?._sectorCapital?.mainNetPct)
+  if (resonance.label) {
+    result.text += ` · ${resonance.label}`
+    if (resonance.label.includes('逆势') || resonance.label.includes('空头')) result.color = '#ff9500'
+  }
+  return result
 }

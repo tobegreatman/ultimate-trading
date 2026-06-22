@@ -41,7 +41,7 @@
           @mouseenter="onLinkHover(index)"
           @mouseleave="onLinkLeave"
         >
-          <span class="nav-link-icon">{{ item.icon }}</span>
+          <span class="nav-link-icon" v-html="icons[item.icon]"></span>
           <span class="nav-link-label">{{ item.label }}</span>
         </router-link>
       </div>
@@ -66,15 +66,28 @@ const pillWidth = ref(0)
 const pillOpacity = ref(0)
 
 const navItems = [
-  { path: '/', icon: '📊', label: 'Dashboard' },
-  { path: '/stock-analysis', icon: '📈', label: 'Stock Analysis' },
-  { path: '/watchlist', icon: '⭐', label: 'Watchlist' },
-  { path: '/analysis', icon: '🧭', label: 'Analysis' },
-  { path: '/screener', icon: '🔍', label: 'Screener' },
-  { path: '/position', icon: '📐', label: 'Position' },
-  { path: '/journal', icon: '📓', label: 'Journal' },
-  { path: '/guide', icon: '📖', label: 'Guide' }
+  { path: '/', icon: 'dashboard', label: 'Dashboard' },
+  { path: '/stock-analysis', icon: 'stock', label: 'Stock Analysis' },
+  { path: '/watchlist', icon: 'watchlist', label: 'Watchlist' },
+  { path: '/analysis', icon: 'analysis', label: 'Analysis' },
+  { path: '/screener', icon: 'screener', label: 'Screener' },
+  { path: '/position', icon: 'position', label: 'Position' },
+  { path: '/journal', icon: 'journal', label: 'Journal' },
+  { path: '/guide', icon: 'guide', label: 'Guide' }
 ]
+
+// Modern stroke-based SVG icons (Lucide-style) — replaces legacy emoji
+const SVG_ATTRS = 'width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+const icons = {
+  dashboard: `<svg ${SVG_ATTRS}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
+  stock: `<svg ${SVG_ATTRS}><path d="M3 17l5-5 3 3 7-7"/><path d="M14 8h6v6"/></svg>`,
+  watchlist: `<svg ${SVG_ATTRS}><path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8l-5.8 3.1 1.1-6.5L2.6 9.8l6.5-.9z"/></svg>`,
+  analysis: `<svg ${SVG_ATTRS}><path d="M3 12h3l3 8 4-16 3 8h5"/></svg>`,
+  screener: `<svg ${SVG_ATTRS}><path d="M3 5h18"/><path d="M6 12h12"/><path d="M10 19h4"/><path d="M7 5v3"/><path d="M17 12v3"/><path d="M12 19v2"/></svg>`,
+  position: `<svg ${SVG_ATTRS}><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg>`,
+  journal: `<svg ${SVG_ATTRS}><path d="M4 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 2v20"/><path d="M12 6h5"/><path d="M12 10h5"/></svg>`,
+  guide: `<svg ${SVG_ATTRS}><path d="M2 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H2z"/><path d="M22 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/></svg>`
+}
 
 const activeIndex = computed(() =>
   navItems.findIndex(item => item.path === route.path)
@@ -350,9 +363,20 @@ watch(() => route.path, () => {
 }
 
 .nav-link-icon {
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   line-height: 1;
-  transition: transform 0.25s ease;
+  color: var(--text-muted);
+  transition: transform 0.25s ease, color 0.25s ease;
+}
+
+.nav-link-icon :deep(svg) {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .navbar-link:hover {
@@ -360,7 +384,8 @@ watch(() => route.path, () => {
 }
 
 .navbar-link:hover .nav-link-icon {
-  transform: scale(1.15);
+  transform: scale(1.12);
+  color: var(--text-primary);
 }
 
 .navbar-link:active {
@@ -371,6 +396,10 @@ watch(() => route.path, () => {
 .navbar-link.active {
   color: #ffffff;
   text-shadow: 0 0 12px rgba(255, 255, 255, 0.2);
+}
+
+.navbar-link.active .nav-link-icon {
+  color: var(--accent);
 }
 
 /* ─── Responsive ─── */
@@ -388,7 +417,13 @@ watch(() => route.path, () => {
   }
 
   .nav-link-icon {
-    font-size: 17px;
+    width: 18px;
+    height: 18px;
+  }
+
+  .nav-link-icon :deep(svg) {
+    width: 18px;
+    height: 18px;
   }
 
   .navbar-link {

@@ -723,6 +723,53 @@ function generatePricePositionSignal(klines) {
   }
 }
 
+/**
+ * 生成短期反转信号 — A股短线存在显著反转效应
+ * 近5日涨幅越大，短期回调风险越高；近5日跌幅越大，反弹概率越高
+ * 与价格位置因子互补：价格位置看年度分位（中期），短期反转看5日涨幅（短期）
+ * @param {Array} klines - K 线序列
+ * @returns {Array<{type, source, text}>}
+ */
+function generateReversalSignal(klines) {
+  if (klines.length < 10) return []
+
+  const closes = klines.map(k => k.close)
+  const last = closes.length - 1
+  if (last < 5) return []
+
+  // 近5日涨幅（含今日）
+  const refPrice = closes[last - 5]
+  if (!refPrice || refPrice <= 0) return []
+  const ret5d = (closes[last] - refPrice) / refPrice * 100
+
+  // 近20日平均涨幅作为基准，衡量5日涨幅的相对极端程度
+  const lookback20 = Math.min(closes.length, 20)
+  const ref20 = closes[last - lookback20 + 1]
+  const ret20d = ref20 && ref20 > 0 ? (closes[last] - ref20) / ref20 * 100 : 0
+  // 相对超额涨幅：5日涨幅 - 20日涨幅的1/4（年化对齐）
+  const excessRet = ret5d - ret20d / 4
+
+  const fmt = Math.abs(ret5d).toFixed(1)
+
+  // 极度超跌：5日跌幅>12% 或 超额跌幅>10%（提高阈值，避免常见波动误判）
+  if (ret5d <= -12 || excessRet <= -10) {
+    return [{ type: 'bullish', source: '短期反转', text: `5日跌${fmt}%，极度超跌，反弹概率高` }]
+  }
+  // 超跌：5日跌幅>7% 或 超额跌幅>6%
+  if (ret5d <= -7 || excessRet <= -6) {
+    return [{ type: 'bullish', source: '短期反转', text: `5日跌${fmt}%，超卖区域` }]
+  }
+  // 极度超买：5日涨幅>18% 或 超额涨幅>15%
+  if (ret5d >= 18 || excessRet >= 15) {
+    return [{ type: 'bearish', source: '短期反转', text: `5日涨${fmt}%，极度超买，回调风险高` }]
+  }
+  // 超买：5日涨幅>12% 或 超额涨幅>10%
+  if (ret5d >= 12 || excessRet >= 10) {
+    return [{ type: 'bearish', source: '短期反转', text: `5日涨${fmt}%，短期超买` }]
+  }
+  return [{ type: 'neutral', source: '短期反转', text: `5日涨跌${fmt}%，正常波动` }]
+}
+
 // ==================== 入口：一次计算全部指标+信号 ====================
 
 export function calcAllIndicators(klines) {
@@ -769,6 +816,7 @@ export function calcAllIndicators(klines) {
     ...generateVolumeStrengthSignals(klinesWithChg),
     ...generateMASlopeSignals(ma20Slope),
     ...generatePricePositionSignal(klines),
+    ...generateReversalSignal(klines),
   ]
 
   return { ma, macd, vmacd, kdj, rsi, boll, atr, ma20Slope, signals }

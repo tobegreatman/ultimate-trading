@@ -1,5 +1,34 @@
 <template>
   <div class="capital-flow-panel">
+    <!-- 资金面共振：个股主力 ↔ 板块主力 跨层级对齐 -->
+    <div v-if="showResonance" class="section resonance-section">
+      <div class="section-header">
+        <h4 class="section-title">资金面共振</h4>
+        <span v-if="resonance.label" class="resonance-chip" :class="resonanceChipClass">{{ resonance.label }}</span>
+      </div>
+      <div class="resonance-rows">
+        <div class="res-row">
+          <span class="res-label">个股主力</span>
+          <div class="res-track">
+            <div class="res-bar" :class="stockLayer.pct >= 0 ? 'bar-in' : 'bar-out'" :style="{ width: barWidth(stockLayer.pct) + '%' }" />
+          </div>
+          <span class="res-pct" :class="stockLayer.pct >= 0 ? 'text-red' : 'text-green'">
+            {{ stockLayer.pct >= 0 ? '+' : '' }}{{ stockLayer.pct.toFixed(2) }}%
+          </span>
+        </div>
+        <div class="res-row">
+          <span class="res-label">{{ sectorLayer.name }}板块</span>
+          <div class="res-track">
+            <div class="res-bar" :class="sectorLayer.pct >= 0 ? 'bar-in' : 'bar-out'" :style="{ width: barWidth(sectorLayer.pct) + '%' }" />
+          </div>
+          <span class="res-pct" :class="sectorLayer.pct >= 0 ? 'text-red' : 'text-green'">
+            {{ sectorLayer.pct >= 0 ? '+' : '' }}{{ sectorLayer.pct.toFixed(2) }}%
+          </span>
+        </div>
+      </div>
+      <div class="res-desc">{{ resonance.desc || '个股与板块资金方向同步，暂无明显共振信号' }}</div>
+    </div>
+
     <!-- 量价分析 -->
     <div class="section">
       <div class="section-header">
@@ -156,12 +185,14 @@ import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts } from '../../composables/useECharts.js'
 import { formatVol, formatYi, formatWan, formatShares, formatFlowYi } from '../../utils/format.js'
+import { getCapitalResonance } from '../../utils/scoring.js'
 
 const props = defineProps({
   capitalFlow: { type: Object, default: null },
   marginData: { type: Object, default: null },
   northboundData: { type: Object, default: null },
   mainForceFlow: { type: Object, default: null },
+  sectorCapital: { type: Object, default: null },
   shareholderData: { type: Object, default: null }
 })
 
@@ -205,6 +236,30 @@ const shPrev = computed(() => props.shareholderData?.available ? props.sharehold
 const shItems = computed(() => props.shareholderData?.available ? (props.shareholderData.data || []) : [])
 
 const nbFrequency = computed(() => props.northboundData?._frequency === 'daily' ? '日度数据' : '季度数据')
+
+// ========== 资金面共振：个股主力 ↔ 板块主力 ==========
+const resonance = computed(() => getCapitalResonance(props.capitalFlow))
+// 板块层摘要（个股所属行业的主力资金）
+const sectorLayer = computed(() => {
+  const sec = props.sectorCapital?.available ? props.sectorCapital.sector : null
+  return sec ? { name: sec.name, pct: sec.mainNetPct, inflow: sec.mainNetInflow, main5d: sec.main5d, main10d: sec.main10d } : null
+})
+// 个股层主力净占比（与板块同口径 mainNetPct）
+const stockLayer = computed(() => {
+  const mf = props.mainForceFlow?.available ? props.mainForceFlow.latest : null
+  return mf?.mainNetPct != null ? { pct: mf.mainNetPct, inflow: mf.mainNetInflow } : null
+})
+// 共振是否可展示（两层都需有占比，或至少个股层在+板块名已知）
+const showResonance = computed(() => !!(stockLayer.value && sectorLayer.value))
+// 单层条宽度：|pct| 映射，5% 满宽
+const barWidth = pct => Math.max(2, Math.min(100, (Math.abs(pct) / 5) * 100))
+const resonanceChipClass = computed(() => {
+  const l = resonance.value.label
+  if (!l) return 'chip-neutral'
+  if (l.includes('多头')) return 'chip-bull'
+  if (l.includes('空头')) return 'chip-bear'
+  return 'chip-warn' // 逆势偏强/偏弱
+})
 
 const signalClass = computed(() => {
   const dir = priceVolumeDir.value
@@ -595,6 +650,35 @@ onMounted(() => nextTick(() => {
   flex-direction: column;
   gap: 8px;
 }
+
+/* 资金面共振条 */
+.resonance-section {
+  padding: 12px;
+  background: var(--bg-surface-alt);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--yellow);
+}
+.resonance-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+}
+.chip-bull { background: var(--green-dim); color: var(--green); }
+.chip-bear { background: var(--red-dim); color: var(--red); }
+.chip-warn { background: rgba(255, 149, 0, 0.14); color: #ff9500; }
+.chip-neutral { background: rgba(255, 214, 10, 0.12); color: var(--yellow); }
+
+.resonance-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.res-row { display: flex; align-items: center; gap: 10px; }
+.res-label { width: 86px; font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+.res-track { flex: 1; height: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; overflow: hidden; }
+.res-bar { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.bar-in { background: linear-gradient(90deg, rgba(255,69,58,0.5), var(--red)); }
+.bar-out { background: linear-gradient(90deg, rgba(48,209,88,0.5), var(--green)); }
+.res-pct { width: 64px; text-align: right; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+.res-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 4px; }
 
 .section-header {
   display: flex;

@@ -235,6 +235,7 @@ const indexIntraday = ref({ sh: { name: '上证指数', trends: [], isUp: false,
 const intradayCache = ref({})
 const detailLoading = ref(false)
 const klineCache = ref({})
+const kline1yCache = ref({})
 const kline5yCache = ref({})
 const basicCache = ref({})
 
@@ -251,7 +252,7 @@ const chartData = computed(() => {
   const p = activePeriod.value
   if (p === '1d') return intradayCache.value[selectedCode.value]?.trends || []
   if (p === '6m') return (klineCache.value[selectedCode.value]?.klines || []).slice(-120)
-  if (p === '1y') return (kline5yCache.value[selectedCode.value]?.klines || []).slice(-250)
+  if (p === '1y') return kline1yCache.value[selectedCode.value]?.klines || []
   if (p === '5y' || p === 'all') return kline5yCache.value[selectedCode.value]?.klines || []
   return []
 })
@@ -380,6 +381,12 @@ async function selectStock(code) {
 
 function switchPeriod(key) {
   activePeriod.value = key
+  // Load 1y data on demand
+  if (key === '1y' && selectedCode.value && !kline1yCache.value[selectedCode.value]) {
+    fetch(`/api/stock/${selectedCode.value}/kline1y`)
+      .then(r => r.json())
+      .then(json => { if (json.ok) kline1yCache.value[selectedCode.value] = json.data })
+  }
   // Load 5y data on demand
   if ((key === '5y' || key === 'all') && selectedCode.value && !kline5yCache.value[selectedCode.value]) {
     fetch(`/api/stock/${selectedCode.value}/kline5y`)

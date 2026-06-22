@@ -103,11 +103,13 @@
                 <div class="signal-card__dim">
                   <span class="dim-name">{{ sig.dimension }}</span>
                   <span class="dim-result" :class="'result-' + (sig.bull ? 'bull' : sig.bear ? 'bear' : 'neutral')">{{ sig.value }}</span>
-                  <span v-if="sig.hint" class="dim-hint">{{ sig.hint }}</span>
                   <span v-if="sig.divergence" class="div-badge" :class="sig.divergence">{{ sig.divergence === 'bullish' ? '底背离' : '顶背离' }}</span>
                   <span v-if="sig.weight >= 1.5 && !sig.divergence" class="weight-badge">强</span>
                 </div>
-                <div class="signal-card__desc">{{ sig.desc }}</div>
+                <div class="signal-card__desc">
+                  {{ sig.desc }}
+                  <span v-if="sig.hint" class="dim-hint">{{ sig.hint }}</span> 
+                </div>
                 <div v-if="sig.subSignals" class="signal-card__indices">
                   <span v-for="sub in sig.subSignals" :key="sub.index" class="index-tag" :class="'tag-' + sub.dir">{{ sub.index }} {{ sub.signal }}</span>
                 </div>
@@ -1077,8 +1079,8 @@ onBeforeUnmount(() => {
 
 .orb-container {
   position: relative;
-  width: 150px;
-  height: 150px;
+  width: 120px;
+  height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1087,8 +1089,8 @@ onBeforeUnmount(() => {
 }
 
 .orb {
-  width: 100px;
-  height: 100px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1100,9 +1102,9 @@ onBeforeUnmount(() => {
 
 .orb-glow {
   position: absolute;
-  inset: -20px;
+  inset: -10px;
   border-radius: 50%;
-  filter: blur(30px);
+  filter: blur(20px);
   opacity: 0.4;
   transition: all 0.6s ease;
 }
@@ -1455,7 +1457,7 @@ onBeforeUnmount(() => {
   background: var(--bg-surface);
   color: var(--text-muted);
 }
-.signal-card__dim .dim-hint {
+.signal-card__desc .dim-hint {
   font-size: 9px;
   opacity: 0.5;
   margin-left: 4px;
@@ -1561,6 +1563,16 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.sector-flow-section::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(91, 156, 245, 0.4), transparent);
 }
 
 .sector-flow-section .collapsible-header {
@@ -1592,29 +1604,44 @@ onBeforeUnmount(() => {
 }
 .sector-flow-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: 20px;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
 }
 .sector-flow-group {
   min-width: 0;
+  background: var(--bg-surface-alt, rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  padding: 14px 16px;
+  transition: border-color 0.2s ease;
+}
+.sector-flow-group:hover {
+  border-color: rgba(91, 156, 245, 0.3);
 }
 .sector-flow-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
+  padding: 7px 0;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
+  transition: background 0.15s ease;
+}
+.sector-flow-row:not(.sector-flow-header):hover {
+  background: rgba(91, 156, 245, 0.04);
 }
 .sector-flow-row:last-child { border-bottom: none; }
 .sector-flow-header {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   border-bottom-color: var(--border);
+  padding-bottom: 8px;
 }
-.sf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sf-change { width: 60px; text-align: right; }
-.sf-flow { width: 80px; text-align: right; }
+.sf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.sf-change { width: 60px; text-align: right; font-family: var(--font-mono); }
+.sf-flow { width: 80px; text-align: right; font-family: var(--font-mono); }
 .sf-lead { width: 70px; text-align: right; color: var(--text-muted); font-size: 12px; }
 @media (max-width: 768px) {
   .sector-flow-grid { grid-template-columns: 1fr; }
@@ -1626,7 +1653,8 @@ onBeforeUnmount(() => {
   font-weight: 600;
   padding: 3px 10px;
   border-radius: var(--radius-pill);
-  margin-left: 4px;
+  margin-left: 8px;
+  letter-spacing: 0.02em;
 }
 
 .rs-badge.rs-strengthening {
@@ -1647,13 +1675,14 @@ onBeforeUnmount(() => {
 .rs-hint {
   font-size: 11px;
   color: var(--text-muted);
-  margin-left: 4px;
+  margin-left: 6px;
 }
 
 .rs-days {
   font-size: 11px;
   color: var(--text-muted);
   margin-left: auto;
+  font-family: var(--font-mono);
 }
 
 .rs-grid {
@@ -1662,10 +1691,33 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.rs-group {
+  background: var(--bg-surface-alt, rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  padding: 14px 16px;
+  transition: border-color 0.2s ease;
+}
+.rs-group:hover {
+  border-color: rgba(91, 156, 245, 0.3);
+}
+
 .rs-group-title {
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rs-group-title::before {
+  content: '';
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.7;
 }
 
 .rs-header-row {
@@ -1674,9 +1726,11 @@ onBeforeUnmount(() => {
   gap: 8px;
   font-size: 11px;
   color: var(--text-muted);
-  padding-bottom: 4px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .rs-header-row .rs-name,
@@ -1704,6 +1758,10 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+.rs-row:hover {
+  background: rgba(91, 156, 245, 0.04);
 }
 
 .rs-row:last-child {
@@ -1717,6 +1775,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 .rs-excess {
@@ -1734,6 +1793,7 @@ onBeforeUnmount(() => {
   width: 40px;
   text-align: right;
   flex-shrink: 0;
+  font-weight: 600;
 }
 
 .rs-trend {

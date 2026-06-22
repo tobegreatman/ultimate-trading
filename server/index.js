@@ -49,7 +49,9 @@ function toSecid(code) {
 
 function parseKline(line) {
   const p = line.split(',')
-  return { date: p[0], open: +p[1], close: +p[2], high: +p[3], low: +p[4], volume: +p[5], amount: +p[6], turnover: +p[7] }
+  // 字段顺序见 analysis.js:165：date,open,close,high,low,volume,amount,amplitude,changePercent,changeAmt,turnover
+  // turnover=f61=p[10]（此前误读 p[7]=振幅，导致下游换手率相关计算实际拿到振幅）
+  return { date: p[0], open: +p[1], close: +p[2], high: +p[3], low: +p[4], volume: +p[5], amount: +p[6], turnover: +p[10] }
 }
 
 function parseKlineNoTurnover(line) {
@@ -596,6 +598,24 @@ router.get('/api/stock/:code/kline5y', async (ctx) => {
   } catch (e) {
     try {
       ctx.body = ok(await fetchStockKline5yFallback(ctx.params.code))
+    } catch (e2) {
+      ctx.body = fail(e.message)
+    }
+  }
+})
+
+// --- Stock K-line 1y (~250日) ---
+router.get('/api/stock/:code/kline1y', async (ctx) => {
+  try {
+    const code = ctx.params.code
+    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${toSecid(code)}&ut=fa5fd1943c7b386f172d6893dbfba10b&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&end=20500101&lmt=250`
+    const data = await fetchJSON(url)
+    const klines = (data.data?.klines || []).map(parseKline)
+    ctx.body = ok({ klines, code: data.data?.code, name: data.data?.name })
+  } catch (e) {
+    try {
+      const fallback = await fetchStockKline5yFallback(ctx.params.code)
+      ctx.body = ok({ ...fallback, klines: fallback.klines.slice(-250) })
     } catch (e2) {
       ctx.body = fail(e.message)
     }

@@ -446,7 +446,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .guide {
   display: flex;
-  height: calc(100vh - 52px);
+  height: calc(100vh - 56px);
   overflow: hidden;
 }
 
@@ -848,7 +848,7 @@ onBeforeUnmount(() => {
 /* Iron rules — 3-column grid */
 .iron-list {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
@@ -897,7 +897,7 @@ onBeforeUnmount(() => {
 /* Emotions */
 .emotion-list {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 

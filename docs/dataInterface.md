@@ -1,4 +1,4 @@
-# SmartStock 数据接口文档
+# Ultimate Trading System 数据接口文档
 
 > 基地址: `http://localhost:3001/api`
 > 统一响应格式: `{ ok: boolean, data?: any, error?: string }`
@@ -233,25 +233,27 @@ GET /api/analysis/macro
 **缓存**: 6 小时
 
 **上游数据源**:
-- CPI: `datacenter-web.eastmoney.com` — `RPT_ECONOMY_CPI`
+- CPI: `datacenter-web.eastmoney.com` — `RPT_ECONOMY_CPI`（含城市/农村分项）
 - PMI: `datacenter-web.eastmoney.com` — `RPT_ECONOMY_PMI`
 - M2/M1: `datacenter-web.eastmoney.com` — `RPT_ECONOMY_CURRENCY_SUPPLY`
-- GDP: `datacenter-web.eastmoney.com` — `RPT_ECONOMY_GDP`
+- GDP: `datacenter-web.eastmoney.com` — `RPT_ECONOMY_GDP`（含三次产业分项）
+- PPI: `datacenter-web.eastmoney.com` — `RPT_ECONOMY_PPI`（价格平减输入）
 - 社融: `macroview.club` — `cn_sf` 图表 API（需 CSRF token）
 
 **响应字段**:
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `cpi` | Object | `{ current, prev, sequential, accumulate, date, history[] }` |
+| `cpi` | Object | `{ current, prev, sequential, accumulate, citySame, ruralSame, date, history[] }` |
 | `pmi` | Object | `{ makeIndex, makeSame, nmakeIndex, nmakeSame, prevMake, date, history[] }` |
 | `m2` | Object | `{ m2Same, m1Same, m1m2Scissors, prevScissors, date, history[] }` |
-| `gdp` | Object | `{ gdpSame, prevGdpSame, date, history[] }` |
+| `gdp` | Object | `{ gdpSame, prevGdpSame, firstSame, secondSame, thirdSame, date, history[] }` |
+| `ppi` | Object | `{ current, prev, accumulate, date, history[] }` |
 | `sf` | Object | `{ increment, yoyChange, stockYoyGrowth, year, month }` |
 | `macroScore` | Number | 综合评分 [-2, +2] |
-| `macroDetails` | Array | 各因子明细 `{ factor, value, signal, desc }` |
+| `macroDetails` | Array | 各因子明细 `{ factor, value, signal, desc }`（含 `社融`/`GDP结构`/`CPI城乡` 成分行） |
 
-**评分规则**:
+**评分规则**（总量 + 成分组成双重维度）:
 
 | 因子 | 正面 | 负面 | 分值 |
 |------|------|------|------|
@@ -259,7 +261,9 @@ GET /api/analysis/macro
 | M1-M2 剪刀差 | 收窄 | 扩大 | ±1 |
 | CPI | 0-2%（温和） | > 2%(-0.5) / < 0%(-1) | -1~-0.5 |
 | GDP | > 5.5% | < 4.5% | ±0.5 |
-| 社融 | 存量增速 > 5% | < -5% | ±0.5 |
+| 社融（价格平减） | 实际增速(名义-PPI) > 5% | < -5% | ±0.5 |
+| GDP结构 | 工业领涨/扩张均衡 | 总量达标但工业<4% | ±0.3 |
+| CPI城乡 | —（弱信号，仅显著背离时提示，不打分） | — | 0 |
 
 ---
 
@@ -771,7 +775,7 @@ POST /api/stock-analysis/ai-judge
 **Content-Type**: `application/json`
 **响应格式**: Server-Sent Events (SSE)
 
-**AI 模型**: 智谱 GLM-4-Flash（通过 OpenAI 兼容 SDK 调用）
+**AI 模型**: 智谱 GLM-5.1（通过 OpenAI 兼容 SDK 调用）
 **API 地址**: `https://open.bigmodel.cn/api/paas/v4`
 
 **请求参数**（JSON body）:
@@ -849,4 +853,4 @@ data: [DONE]
 |------|------|--------|
 | `info.stcn.com` | 北向资金备用（证券时报） | 1 |
 | `www.macroview.club` | 社融数据 | 1 |
-| `open.bigmodel.cn` | AI 判断（智谱 GLM-4-Flash） | 1 |
+| `open.bigmodel.cn` | AI 判断（智谱 GLM-5.1） | 1 |

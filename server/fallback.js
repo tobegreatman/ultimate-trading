@@ -34,6 +34,38 @@ function toTc(code) {
   return code.startsWith('6') ? `sh${code}` : `sz${code}`
 }
 
+/**
+ * 补充换手率：从腾讯行情快照获取流通股本，再根据 K 线成交量计算历史换手率
+ * 换手率 = 成交量(手) × 100 / 流通股本 × 100
+ */
+async function supplementTurnover(klines, code, lmt) {
+  // 检查是否已有换手率数据
+  const hasTurnover = klines.some(k => k.turnover > 0)
+  if (hasTurnover) return
+
+  try {
+    // 从腾讯行情快照获取流通股本
+    const tc = toTc(code)
+    const qtUrl = `https://qt.gtimg.cn/q=${tc}`
+    const text = await fetchGBK(qtUrl)
+    const m = text.match(/v_\w+="(.+)"/)
+    if (!m) return
+
+    const fields = m[1].split('~')
+    const floatShares = +fields[73] // 流通股本(股)
+    if (!floatShares || floatShares <= 0) return
+
+    // 根据 K 线成交量计算换手率
+    for (const k of klines) {
+      if (k.volume > 0) {
+        k.turnover = +(k.volume * 100 / floatShares * 100).toFixed(4)
+      }
+    }
+  } catch (e) {
+    console.warn('supplementTurnover failed for', code, e.message)
+  }
+}
+
 // 解析 qt.gtimg.cn 响应: v_sh000001="...";v_sz399001="...";
 function parseQt(text) {
   const map = {}
@@ -183,6 +215,8 @@ export async function fetchStockKlineFallback(code, klt = '101') {
     date: k[0], open: +k[1], close: +k[2], high: +k[3], low: +k[4],
     volume: +k[5], amount: +(k[6] || 0), turnover: +(k[7] || 0)
   }))
+  // 腾讯 K 线不含换手率时，从 emdatah5 资金流向K线补充
+  await supplementTurnover(klines, code, +klt === 102 ? 120 : +klt === 103 ? 500 : 120)
   const prevClose = klines.length >= 2 ? klines[klines.length - 2].close : null
   return { klines, prevClose, code, name: '' }
 }
@@ -196,6 +230,8 @@ export async function fetchStockKline5yFallback(code) {
     date: k[0], open: +k[1], close: +k[2], high: +k[3], low: +k[4],
     volume: +k[5], amount: +(k[6] || 0), turnover: +(k[7] || 0)
   }))
+  // 腾讯 K 线不含换手率时，从 emdatah5 资金流向K线补充
+  await supplementTurnover(klines, code, 1200)
   return { klines, code, name: '' }
 }
 

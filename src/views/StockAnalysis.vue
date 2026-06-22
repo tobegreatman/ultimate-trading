@@ -8,6 +8,7 @@
         <span v-if="currentQuote" class="stock-price" :class="priceClass">
           ¥{{ formatPrice(currentQuote.close) }}
           <span class="stock-change">{{ formatChange(currentQuote.change, currentQuote.changeAmt) }}</span>
+          <span v-if="industryLabel" class="stock-industry">{{ industryLabel }}</span>
         </span>
       </div>
       <div class="stock-selector">
@@ -71,14 +72,14 @@
           <div class="diag-value" :style="{ color: capitalConclusion.color }">{{ capitalConclusion.icon }} {{ capitalConclusion.text }}</div>
         </div>
       </div>
-        <div class="style-switcher">
-          <button v-for="st in styleOptions" :key="st.key" :class="['style-btn', { active: investStyle === st.key }]" @click="onStyleChange(st.key)" :title="st.hint">{{ st.label }}</button>
-        </div>
         <div class="tabs">
           <button v-for="tab in tabs" :key="tab.key" :class="['tab-btn', { active: activeTab === tab.key }]" @click="activeTab = tab.key">
             {{ tab.label }}
             <span v-if="tabErrors[tab.key]" class="tab-err-dot" />
           </button>
+        </div>
+        <div class="style-switcher">
+          <button v-for="st in styleOptions" :key="st.key" :class="['style-btn', { active: investStyle === st.key }]" @click="onStyleChange(st.key)" :title="st.hint">{{ st.label }}</button>
         </div>
       </div>
 
@@ -180,6 +181,7 @@
             :margin-data="marginData"
             :northbound-data="northboundData"
             :main-force-flow="mainForceFlow"
+            :sector-capital="sectorCapitalData"
             :shareholder-data="shareholderData"
           />
           <ScorePanel
@@ -190,9 +192,11 @@
             :ai-judge-loading="aiJudgeLoading"
             :ai-judge-error="aiJudgeError"
             :ai-judge-enabled="aiJudgeEnabled"
+            :ai-model="aiModel"
             :stock-code="selectedCode"
             :industry="industryLabel"
             @toggle-ai="toggleAIJudge"
+            @change-model="onModelChange"
           />
         </KeepAlive>
       </div>
@@ -218,6 +222,7 @@ import CapitalFlowPanel from '../components/analysis/CapitalFlowPanel.vue'
 import ScorePanel from '../components/analysis/ScorePanel.vue'
 import { useStockData } from '../composables/useStockData.js'
 import { useStrategyGuide } from '../composables/useStrategyGuide.js'
+import { getCapitalResonance } from '../utils/scoring.js'
 
 const watchlistStore = useWatchlistStore()
 
@@ -231,7 +236,7 @@ const investStyle = ref('short')
 // ==================== Composable: 数据层 ====================
 const {
   klines, indicators, techSignals, fundamental, capitalFlow,
-  marginData, northboundData, mainForceFlow, shareholderData,
+  marginData, northboundData, mainForceFlow, sectorCapitalData, shareholderData,
   benchmarkKlines, klinePeriod,
   loading, error, loadErrors, dataTimestamp, lastRefreshTime,
   scoreResult,
@@ -240,9 +245,9 @@ const {
 } = useStockData(selectedCode, investStyle)
 
 const styleOptions = [
-  { key: 'short', label: '短线', hint: '资金面 42% / 技术面 35% / 基本面 15% / 风险 8%' },
-  { key: 'mid', label: '中线', hint: '资金面 32% / 技术面 30% / 基本面 26% / 风险 12%' },
-  { key: 'long', label: '长线', hint: '基本面 40% / 风险 18% / 技术面 22% / 资金面 20%' },
+  { key: 'short', label: '短线', hint: '技术 33% / 资金 38% / 基本面 14% / 风险 15%' },
+  { key: 'mid', label: '中线', hint: '技术 28% / 资金 30% / 基本面 26% / 风险 16%' },
+  { key: 'long', label: '长线', hint: '基本面 38% / 风险 20% / 资金 22% / 技术 20%' },
 ]
 
 const tabs = [
@@ -251,6 +256,16 @@ const tabs = [
   { key: 'fundamental', label: '基本面' },
   { key: 'capital', label: '资金面' },
 ]
+
+// 资金面共振标签（显示在 tab 标题后）
+const capitalResonance = computed(() => getCapitalResonance(capitalFlow.value))
+const capitalResonanceChipClass = computed(() => {
+  const l = capitalResonance.value.label
+  if (!l) return ''
+  if (l.includes('多头')) return 'chip-bull'
+  if (l.includes('空头')) return 'chip-bear'
+  return 'chip-warn'
+})
 
 const searchKw = ref('')
 const searchResults = ref([])
@@ -293,6 +308,7 @@ const aiJudgeText = ref('')
 const aiJudgeLoading = ref(false)
 const aiJudgeError = ref('')
 const aiJudgeEnabled = ref(false)
+const aiModel = ref('glm-4.7-flash')
 let aiAbortController = null
 let aiDelayTimer = null
 
@@ -317,6 +333,16 @@ function toggleAIJudge() {
     aiJudgeError.value = ''
     if (aiAbortController) { aiAbortController.abort(); aiAbortController = null }
     aiJudgeLoading.value = false
+  }
+}
+
+function onModelChange(model) {
+  if (model === aiModel.value) return
+  aiModel.value = model
+  // 切换模型后立即重新生成（仅在 AI 已开启时）
+  if (aiJudgeEnabled.value && scoreResult.value) {
+    clearTimeout(aiDelayTimer)
+    aiDelayTimer = setTimeout(() => nextTick(() => triggerAIJudge()), 200)
   }
 }
 
@@ -389,6 +415,7 @@ function triggerAIJudge() {
   const payload = {
     code: stock?.code || selectedCode.value,
     name: stock?.name || '',
+    model: aiModel.value,
     scoreSummary: {
       total: sr.total,
       suggestion: sr.suggestion,
@@ -416,7 +443,7 @@ function triggerAIJudge() {
     },
     priceAction: { latestClose, change5d, change20d },
     trendContext,
-    previousAdvice: aiJudgeText.value || null,
+    previousAdvice: aiJudgeText.value ? aiJudgeText.value.slice(-200) : null,
   }
 
   aiJudgeText.value = ''
@@ -449,8 +476,8 @@ function formatTime(d) {
   return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-const errorNameMap = { kline: 'K线', fundamental: '基本面', capitalFlow: '资金面', margin: '融资融券', northbound: '北向资金', mainForce: '主力资金', shareholder: '股东户数' }
-const tabErrorMap = { technical: 'kline', fundamental: 'fundamental', capital: ['capitalFlow', 'margin', 'northbound', 'mainForce', 'shareholder'], score: [] }
+const errorNameMap = { kline: 'K线', fundamental: '基本面', capitalFlow: '资金面', margin: '融资融券', northbound: '北向资金', mainForce: '主力资金', shareholder: '股东户数', billboard: '龙虎榜' }
+const tabErrorMap = { technical: 'kline', fundamental: 'fundamental', capital: ['capitalFlow', 'margin', 'northbound', 'mainForce', 'shareholder', 'billboard'], score: [] }
 
 const hasLoadErrors = computed(() => Object.keys(loadErrors.value).length > 0)
 const errorLabels = computed(() => {
@@ -608,6 +635,16 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
+.stock-industry {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .stock-select {
   padding: 5px 12px;
   border-radius: var(--radius-sm);
@@ -656,11 +693,8 @@ onBeforeUnmount(() => {
 }
 
 .style-btn.active {
-  background: var(--glass-bg);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: #fff;
-  box-shadow: var(--glass-glow);
+  background: var(--accent-dim);
+  color: var(--accent);
 }
 
 /* 搜索框 */
@@ -830,10 +864,13 @@ onBeforeUnmount(() => {
 
 .diag-card.clickable {
   cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
 }
 
 .diag-card.clickable:hover {
   border-color: var(--accent);
+  background: rgba(0, 113, 227, 0.06);
+  transform: translateY(-1px);
 }
 
 .diag-label {
@@ -850,7 +887,7 @@ onBeforeUnmount(() => {
 }
 
 .diag-sub {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -1029,6 +1066,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: nowrap;
   gap: 8px;
+  margin-left: auto;
   background: var(--bg-surface);
   border-radius: var(--radius-sm);
   padding: 2px;
@@ -1061,6 +1099,20 @@ onBeforeUnmount(() => {
   color: #fff;
   box-shadow: var(--glass-glow);
 }
+
+.diag-resonance-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 4px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.diag-resonance-chip.chip-bull { background: var(--green-dim); color: var(--green); }
+.diag-resonance-chip.chip-bear { background: var(--red-dim); color: var(--red); }
+.diag-resonance-chip.chip-warn { background: rgba(255, 149, 0, 0.14); color: #ff9500; }
 
 /* 骨架屏 */
 @keyframes shimmer {

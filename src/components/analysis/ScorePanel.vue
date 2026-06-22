@@ -46,8 +46,8 @@
       <div class="details-section">
         <h4 class="section-title">评分明细</h4>
         <div class="details-cols">
-          <div v-for="dim in dimensionList" :key="dim.key" class="detail-col">
-            <div class="col-header" :style="{ color: dim.color }">{{ dim.label }}</div>
+          <div v-for="dim in dimensionList" :key="dim.key" :class="['detail-col', `col-${dim.key}`]">
+            <div class="col-header" :style="{ color: dim.color }">{{ dim.label }}<span v-if="dim.resonance" class="col-resonance" :class="resonanceClass(dim.resonance)">{{ dim.resonance }}</span></div>
             <div class="detail-list">
               <div v-for="(item, i) in getDetails(dim.label)" :key="i" class="detail-item">
                 <span class="detail-name">{{ item.name }}</span>
@@ -63,9 +63,19 @@
       <div v-if="scoreResult" class="ai-judge-section">
         <div class="ai-header">
           <h4 class="section-title" style="margin-bottom:0">综合判断 <span class="ai-badge">AI</span></h4>
-          <button class="ai-toggle" :class="{ active: aiJudgeEnabled }" @click="emit('toggle-ai')">
-            {{ aiJudgeEnabled ? '关闭' : '生成' }}
-          </button>
+          <div class="ai-controls">
+            <div class="ai-model-switcher" v-if="aiJudgeEnabled">
+              <button
+                v-for="m in modelOptions"
+                :key="m.value"
+                :class="['model-btn', { active: aiModel === m.value }]"
+                @click="emit('change-model', m.value)"
+              >{{ m.label }}</button>
+            </div>
+            <button class="ai-toggle" :class="{ active: aiJudgeEnabled }" @click="emit('toggle-ai')">
+              {{ aiJudgeEnabled ? '关闭' : '生成' }}
+            </button>
+          </div>
         </div>
         <template v-if="aiJudgeEnabled">
         <div v-if="aiJudgeLoading && !aiJudgeText" class="ai-skeleton">
@@ -95,12 +105,18 @@ const props = defineProps({
   aiJudgeLoading: { type: Boolean, default: false },
   aiJudgeError: { type: String, default: '' },
   aiJudgeEnabled: { type: Boolean, default: false },
+  aiModel: { type: String, default: 'glm-4.7-flash' },
   stockCode: { type: String, default: '' },
   industryLabel: { type: String, default: '' },
   industry: { type: String, default: '' },
 })
 
-const emit = defineEmits(['toggle-ai'])
+const emit = defineEmits(['toggle-ai', 'change-model'])
+
+const modelOptions = [
+  { value: 'glm-4.7-flash', label: 'GLM-4.7-Flash' },
+  { value: 'glm-5.2', label: 'GLM-5.2' },
+]
 
 const gaugeRef = ref(null)
 const radarRef = ref(null)
@@ -141,12 +157,18 @@ const dimensionList = computed(() => {
   if (!dims) return []
   return Object.keys(DIM_META)
     .filter(key => dims[key])
-    .map(key => ({ key, label: DIM_META[key].label, pct: dims[key].pct, color: DIM_META[key].color }))
+    .map(key => ({ key, label: DIM_META[key].label, pct: dims[key].pct, color: DIM_META[key].color, resonance: dims[key].resonance || null }))
 })
 
 const allDetails = computed(() => props.scoreResult?.details || [])
 function getDetails(dimensionLabel) {
   return allDetails.value.filter(d => d.dimension === dimensionLabel)
+}
+
+function resonanceClass(label) {
+  if (label.includes('多头')) return 'res-bull'
+  if (label.includes('空头')) return 'res-bear'
+  return 'res-warn' // 逆势偏强/偏弱
 }
 
 const renderedAIContent = computed(() => {
@@ -299,6 +321,7 @@ onMounted(() => {
 
 .gauge-wrap {
   flex: 1;
+  min-width: 42%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -409,6 +432,11 @@ onMounted(() => {
   border: 1px solid var(--border);
 }
 
+/* 评分明细列宽：基本面 22% / 资金面 28%（资金面因子多、描述长）。
+   fundamental+capital 之和=2.0（与技术面+风险面相等），技术面/风险面被钉在 25% 不变 */
+.detail-col.col-fundamental { flex: 0.88; }
+.detail-col.col-capital { flex: 1.12; }
+
 .col-header {
   font-size: 13px;
   font-weight: 600;
@@ -417,6 +445,20 @@ onMounted(() => {
   border-bottom: 1px solid var(--border);
   margin-bottom: 2px;
 }
+
+/* 资金面共振标记 */
+.col-resonance {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.res-bull { background: var(--green-dim); color: var(--green); }
+.res-bear { background: var(--red-dim); color: var(--red); }
+.res-warn { background: rgba(255, 149, 0, 0.14); color: #ff9500; }
 
 .detail-list {
   display: flex;
@@ -606,6 +648,37 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+.ai-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-model-switcher {
+  display: inline-flex;
+  background: var(--bg-surface-alt);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.model-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #64748b);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.model-btn:hover {
+  color: var(--text-primary, #e2e8f0);
+}
+.model-btn.active {
+  background: rgba(0, 113, 227, 0.25);
+  color: #5b9cf5;
 }
 .ai-toggle {
   font-size: 11px;
