@@ -5,6 +5,9 @@ import cors from '@koa/cors'
 import logger from 'koa-logger'
 import bodyParser from 'koa-bodyparser'
 import https from 'https'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import {
   fetchIndicesFallback,
   fetchIndicesIntradayFallback,
@@ -1113,6 +1116,34 @@ registerAIJudgeRoutes(router)
 // ==================== 启动 ====================
 app.use(router.routes())
 app.use(router.allowedMethods())
-app.listen(PORT, () => {
-  console.log(`Ultimate Trading System API server running on http://localhost:${PORT}`)
+
+// ==================== 静态文件托管 (生产模式) ====================
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const distPath = path.join(__dirname, '..', 'dist')
+if (fs.existsSync(distPath)) {
+  app.use(async (ctx) => {
+    // API 路由已由上面的 router 处理，这里只处理静态文件
+    if (ctx.path.startsWith('/api')) return
+    let filePath = path.join(distPath, ctx.path)
+    // 安全检查：防止路径遍历
+    if (!filePath.startsWith(distPath)) return
+    // 如果文件不存在，回退到 index.html (SPA 路由)
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+      filePath = path.join(distPath, 'index.html')
+    }
+    const ext = path.extname(filePath)
+    const types = {
+      '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
+      '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+      '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff': 'font/woff',
+      '.woff2': 'font/woff2', '.ttf': 'font/ttf'
+    }
+    ctx.type = types[ext] || 'application/octet-stream'
+    ctx.body = fs.createReadStream(filePath)
+  })
+  console.log(`Serving static files from ${distPath}`)
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Ultimate Trading System server running on http://0.0.0.0:${PORT}`)
 })

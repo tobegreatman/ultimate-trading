@@ -63,6 +63,48 @@ npm run dev                              # 前端 :5173（自动代理 /api → 
 
 **可选**：AI 智能选股需登录态，在 `server/.env` 配置 `EASTMONEY_EMAUTH`（东方财富 cookie），否则只能解析 2–3 个条件。
 
+## 外网访问（ngrok 隧道）
+
+通过 ngrok 将本地服务暴露到公网，支持从外网设备访问。采用**生产模式**：前端构建为静态文件由 Koa 托管，仅暴露单一端口，避免 HMR websocket 导致隧道不稳定。
+
+### 使用方法
+
+```powershell
+.\start-ngrok.ps1
+```
+
+脚本自动完成：构建前端 → 启动 Koa 服务（含静态文件托管）→ 建立 ngrok 隧道。
+
+### 访问地址
+
+启动后终端会输出公网 URL（格式 `https://xxx.ngrok-free.dev`）。首次访问浏览器会显示 ngrok 警告页面，点击 **"Visit Site"** 即可。
+
+### 相关文件
+
+| 文件 | 说明 |
+|------|------|
+| [start-ngrok.ps1](start-ngrok.ps1) | 一键启动脚本（构建 + 服务 + 隧道） |
+| [start-tunnel.cjs](start-tunnel.cjs) | ngrok 隧道脚本（`@ngrok/ngrok` Node.js SDK） |
+| [server/index.js](server/index.js) | Koa 后端，生产模式下同时托管 `dist/` 静态文件与 API |
+
+### 架构说明
+
+```
+外网用户 → ngrok 隧道 → localhost:3001 (Koa)
+                            ├── /api/*        → 后端 API
+                            └── /*            → dist/ 静态文件 (SPA)
+```
+
+- 前端经 `npm run build` 打包到 `dist/`
+- [server/index.js](server/index.js) 在路由之后注册静态文件中间件，非 `/api` 请求回退到 `index.html`（SPA 路由）
+- 只需暴露 3001 端口，无需 Vite dev server
+
+### 注意事项
+
+- ngrok 免费版每次启动分配随机子域名，如需固定地址需在 [ngrok dashboard](https://dashboard.ngrok.com/domains) 创建保留域名并在 [start-tunnel.cjs](start-tunnel.cjs) 中配置 `domain` 参数
+- 免费版有访问量限制（1GB/月流量，20000 请求/月），适合演示与轻量使用
+- 按 `Ctrl+C` 关闭隧道，Koa 服务保持运行
+
 ## 核心能力
 
 ### 多维大盘判定

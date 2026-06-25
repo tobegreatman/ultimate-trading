@@ -9,14 +9,22 @@
         class="guide-nav__link"
         :class="{ active: activeChapter === ch.id }"
         @click.prevent="scrollTo(ch.id)"
-      >{{ ch.icon }} {{ ch.title }}</a>
+      >
+        <span class="nav-icon" v-html="ch.icon"></span>
+        <span class="nav-text">{{ ch.title }}</span>
+      </a>
     </nav>
 
     <!-- Right content -->
     <main class="guide-content">
       <!-- 1. 买入决策树 -->
       <section id="ch-buy" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">🛒</span> 想买入</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--buy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="21" r="1.5"/><circle cx="19" cy="21" r="1.5"/><path d="M2 3h3l2.6 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 7H6"/></svg>
+          </span>
+          想买入
+        </h2>
         <div class="decision-tree">
           <div v-for="(node, i) in buyDecisionTree" :key="i" class="dt-node" :class="[node.type, { 'dt-last': i === buyDecisionTree.length - 1 }]">
             <div class="dt-step-num">{{ i + 1 }}</div>
@@ -33,7 +41,12 @@
 
       <!-- 2. 市场趋势状态 -->
       <section id="ch-market" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">📊</span> 市场趋势状态</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--market">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+          </span>
+          市场趋势状态
+        </h2>
 
         <h3 class="sub-title">九维判据</h3>
         <p class="section-desc">系统自动采集 9 个维度数据（7维核心技术 + 宏观因子辅助 + 波动率），采用加权评分机制判断牛/震/熊信号：</p>
@@ -83,7 +96,12 @@
 
       <!-- 3. 买入策略 -->
       <section id="ch-strategies" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">📈</span> 买入策略</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--strategies">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg>
+          </span>
+          买入策略
+        </h2>
 
         <div v-for="s in strategies" :key="s.name" class="strategy-block">
           <h3 class="strategy-name">{{ s.name }}</h3>
@@ -115,7 +133,12 @@
 
       <!-- 4. 要卖出 -->
       <section id="ch-sell" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">💰</span> 要卖出</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--sell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </span>
+          要卖出
+        </h2>
 
         <h3 class="sub-title">卖出优先级</h3>
         <div class="priority-list">
@@ -155,7 +178,12 @@
 
       <!-- 5. 不知仓位 -->
       <section id="ch-position" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">📐</span> 不知仓位</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--position">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          </span>
+          不知仓位
+        </h2>
 
         <h3 class="sub-title">总仓位控制</h3>
         <table>
@@ -187,7 +215,12 @@
 
       <!-- 6. 铁律 -->
       <section id="ch-iron" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">🛡️</span> 铁律</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--iron">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </span>
+          铁律
+        </h2>
         <div class="iron-list">
           <div v-for="rule in ironRules" :key="rule.id" class="iron-item">
             <div class="iron-num">{{ rule.id }}</div>
@@ -202,7 +235,12 @@
 
       <!-- 7. 情绪波动 -->
       <section id="ch-emotion" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">🧠</span> 情绪波动</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--emotion">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+          </span>
+          情绪波动
+        </h2>
         <div class="emotion-list">
           <div v-for="e in emotions" :key="e.key" class="emotion-card">
             <div class="emotion-name">{{ e.name }}</div>
@@ -214,7 +252,12 @@
 
       <!-- 8. 每日流程 -->
       <section id="ch-daily" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">📋</span> 每日流程</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--daily">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </span>
+          每日流程
+        </h2>
 
         <div v-for="period in dailyFlow" :key="period.title" class="flow-block">
           <h3 class="sub-title">{{ period.title }}</h3>
@@ -229,7 +272,12 @@
 
       <!-- 9. 系统失效 -->
       <section id="ch-failure" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">🚨</span> 系统失效指标</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--failure">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </span>
+          系统失效指标
+        </h2>
         <div class="failure-list">
           <div v-for="(f, i) in failureIndicators" :key="i" class="failure-item">
             <div class="failure-num">{{ i + 1 }}</div>
@@ -240,7 +288,12 @@
 
       <!-- 10. 核心公式 -->
       <section id="ch-formula" class="guide-section">
-        <h2 class="ch-title"><span class="ch-icon">⭐</span> 核心公式</h2>
+        <h2 class="ch-title">
+          <span class="ch-icon ch-icon--formula">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </span>
+          核心公式
+        </h2>
         <div class="formula-hero">
           <div class="formula-main">
             长期盈利 = 正期望策略 × 严格风险控制 × 纪律性执行 × 时间复利
@@ -259,16 +312,16 @@ import { IRON_RULES, EMOTIONS } from '../utils/constants.js'
 const activeChapter = ref('ch-buy')
 
 const chapters = [
-  { id: 'ch-buy', title: '想买入', icon: '🛒' },
-  { id: 'ch-market', title: '市场趋势', icon: '📊' },
-  { id: 'ch-strategies', title: '买入策略', icon: '📈' },
-  { id: 'ch-sell', title: '要卖出', icon: '💰' },
-  { id: 'ch-position', title: '不知仓位', icon: '📐' },
-  { id: 'ch-iron', title: '铁律', icon: '🛡️' },
-  { id: 'ch-emotion', title: '情绪波动', icon: '🧠' },
-  { id: 'ch-daily', title: '每日流程', icon: '📋' },
-  { id: 'ch-failure', title: '系统失效', icon: '🚨' },
-  { id: 'ch-formula', title: '核心公式', icon: '⭐' }
+  { id: 'ch-buy', title: '想买入', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1.5"/><circle cx="19" cy="21" r="1.5"/><path d="M2 3h3l2.6 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 7H6"/></svg>' },
+  { id: 'ch-market', title: '市场趋势', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>' },
+  { id: 'ch-strategies', title: '买入策略', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg>' },
+  { id: 'ch-sell', title: '要卖出', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>' },
+  { id: 'ch-position', title: '不知仓位', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>' },
+  { id: 'ch-iron', title: '铁律', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' },
+  { id: 'ch-emotion', title: '情绪波动', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>' },
+  { id: 'ch-daily', title: '每日流程', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
+  { id: 'ch-failure', title: '系统失效', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' },
+  { id: 'ch-formula', title: '核心公式', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' }
 ]
 
 const buyDecisionTree = [
@@ -451,33 +504,59 @@ onBeforeUnmount(() => {
 }
 
 .guide-nav {
-  width: 160px;
+  width: 180px;
   flex-shrink: 0;
   background: var(--bg-surface);
   border-right: 1px solid var(--border);
-  padding: 20px 12px;
+  padding: 24px 14px;
   overflow-y: auto;
 }
 
 .guide-nav__title {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
   padding: 0 8px;
 }
 
 .guide-nav__link {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px;
+  gap: 10px;
+  padding: 9px 10px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
   margin-bottom: 2px;
+  position: relative;
+  border: 1px solid transparent;
+}
+
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+.nav-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.nav-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .guide-nav__link:hover {
@@ -485,12 +564,32 @@ onBeforeUnmount(() => {
   color: var(--text-primary);
 }
 
+.guide-nav__link:hover .nav-icon {
+  color: var(--text-secondary);
+}
+
 .guide-nav__link.active {
   background: var(--glass-bg);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   color: #fff;
-  border: 1px solid var(--glass-border);
+  border-color: var(--glass-border);
+}
+
+.guide-nav__link.active::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  background: var(--accent);
+  border-radius: 0 3px 3px 0;
+}
+
+.guide-nav__link.active .nav-icon {
+  color: var(--accent);
 }
 
 .guide-content {
@@ -504,19 +603,44 @@ onBeforeUnmount(() => {
 }
 
 .ch-title {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 20px;
-  padding-bottom: 12px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
 }
 
 .ch-icon {
-  font-size: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  flex-shrink: 0;
 }
+
+.ch-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.ch-icon--buy { background: rgba(91, 156, 245, 0.12); color: var(--accent); }
+.ch-icon--market { background: rgba(255, 159, 10, 0.12); color: #ff9f0a; }
+.ch-icon--strategies { background: rgba(48, 209, 88, 0.12); color: var(--green); }
+.ch-icon--sell { background: rgba(255, 214, 10, 0.12); color: var(--yellow); }
+.ch-icon--position { background: rgba(175, 82, 222, 0.12); color: #af52de; }
+.ch-icon--iron { background: rgba(255, 69, 58, 0.12); color: var(--red); }
+.ch-icon--emotion { background: rgba(255, 55, 95, 0.12); color: #ff375f; }
+.ch-icon--daily { background: rgba(100, 210, 255, 0.12); color: #64d2ff; }
+.ch-icon--failure { background: rgba(255, 69, 58, 0.15); color: var(--red); }
+.ch-icon--formula { background: rgba(255, 214, 10, 0.12); color: var(--yellow); }
 
 .sub-title {
   font-size: 15px;
@@ -544,6 +668,31 @@ onBeforeUnmount(() => {
   margin-bottom: 20px;
 }
 
+/* Table enhancements */
+.guide-content table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.guide-content th {
+  background: var(--bg-surface-alt);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.guide-content tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.guide-content tbody tr:hover {
+  background: var(--bg-surface-alt);
+}
+
+.guide-content tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .status-cards {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -555,15 +704,39 @@ onBeforeUnmount(() => {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 14px;
+  padding: 16px 14px;
   text-align: center;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.status-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+}
+
+.status-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-hover, rgba(255,255,255,0.12));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 
 .status-card.bull { border-top: 3px solid var(--red); }
+.status-card.bull::before { background: linear-gradient(90deg, var(--red), rgba(255, 69, 58, 0.3)); }
 .status-card.bull-lean { border-top: 3px solid var(--red); opacity: 0.85; }
+.status-card.bull-lean::before { background: linear-gradient(90deg, rgba(255, 69, 58, 0.6), rgba(255, 69, 58, 0.2)); }
 .status-card.neutral { border-top: 3px solid var(--text-muted); }
+.status-card.neutral::before { background: linear-gradient(90deg, var(--text-muted), rgba(255,255,255,0.1)); }
 .status-card.bear-lean { border-top: 3px solid var(--green); opacity: 0.85; }
+.status-card.bear-lean::before { background: linear-gradient(90deg, rgba(48, 209, 88, 0.6), rgba(48, 209, 88, 0.2)); }
 .status-card.bear { border-top: 3px solid var(--green); }
+.status-card.bear::before { background: linear-gradient(90deg, var(--green), rgba(48, 209, 88, 0.3)); }
 
 .status-card__name {
   font-size: 18px;
@@ -632,6 +805,7 @@ onBeforeUnmount(() => {
 .decision-tree {
   display: flex;
   flex-direction: column;
+  gap: 4px;
 }
 
 .dt-node {
@@ -639,22 +813,31 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 12px;
   position: relative;
-  padding: 10px 16px;
+  padding: 12px 16px;
   border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
 }
 
 .dt-node.check {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-surface);
+  border-color: var(--border);
+}
+
+.dt-node.check:hover {
+  border-color: rgba(0, 113, 227, 0.3);
+  background: var(--bg-surface-alt);
 }
 
 .dt-node.action {
   background: var(--green-dim);
+  border-color: rgba(48, 209, 88, 0.2);
 }
 
 /* Step number badge */
 .dt-step-num {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -667,6 +850,11 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(0, 113, 227, 0.25);
   position: relative;
   z-index: 1;
+  transition: transform 0.2s;
+}
+
+.dt-node:hover .dt-step-num {
+  transform: scale(1.08);
 }
 
 .dt-node.action .dt-step-num {
@@ -682,14 +870,15 @@ onBeforeUnmount(() => {
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
-  width: 1px;
-  height: calc(100% + 20px - 24px);
-  background: linear-gradient(180deg, var(--accent-dim), rgba(0, 113, 227, 0.06));
+  width: 2px;
+  height: calc(100% + 4px - 26px);
+  background: linear-gradient(180deg, rgba(0, 113, 227, 0.3), rgba(0, 113, 227, 0.08));
   z-index: 0;
+  border-radius: 1px;
 }
 
 .dt-node:not(.dt-last).action .dt-step-num::after {
-  background: linear-gradient(180deg, rgba(48, 209, 88, 0.2), rgba(48, 209, 88, 0.04));
+  background: linear-gradient(180deg, rgba(48, 209, 88, 0.3), rgba(48, 209, 88, 0.06));
 }
 
 .dt-content {
@@ -736,8 +925,14 @@ onBeforeUnmount(() => {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 22px;
   margin-bottom: 12px;
+  transition: all 0.25s ease;
+}
+
+.strategy-block:hover {
+  border-color: rgba(48, 209, 88, 0.25);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
 }
 
 .strategy-name {
@@ -858,7 +1053,16 @@ onBeforeUnmount(() => {
   padding: 14px 16px;
   background: var(--bg-surface);
   border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
   border-left: 3px solid var(--red);
+  transition: all 0.25s ease;
+}
+
+.iron-item:hover {
+  transform: translateY(-2px);
+  border-left-color: var(--red);
+  box-shadow: 0 6px 18px rgba(255, 69, 58, 0.12);
+  background: var(--bg-surface-alt);
 }
 
 .iron-num {
@@ -903,8 +1107,16 @@ onBeforeUnmount(() => {
 
 .emotion-card {
   background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 14px 18px;
+  transition: all 0.25s ease;
+}
+
+.emotion-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 55, 95, 0.3);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
 }
 
 .emotion-name {
@@ -960,9 +1172,17 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 14px 16px;
   background: var(--red-dim);
+  border: 1px solid rgba(255, 69, 58, 0.15);
   border-radius: var(--radius-sm);
   font-size: 13px;
   line-height: 1.5;
+  transition: all 0.25s ease;
+}
+
+.failure-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 69, 58, 0.35);
+  box-shadow: 0 6px 18px rgba(255, 69, 58, 0.15);
 }
 
 .failure-num {
@@ -983,23 +1203,40 @@ onBeforeUnmount(() => {
 /* Formula hero */
 .formula-hero {
   text-align: center;
-  padding: 40px 20px;
-  background: var(--bg-surface);
+  padding: 48px 24px;
+  background: linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-surface-alt) 100%);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+.formula-hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at center, rgba(255, 214, 10, 0.08) 0%, transparent 50%);
+  pointer-events: none;
 }
 
 .formula-main {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--yellow);
   line-height: 1.6;
+  position: relative;
+  text-shadow: 0 0 20px rgba(255, 214, 10, 0.2);
 }
 
 .formula-note {
   font-size: 13px;
   color: var(--red);
-  margin-top: 12px;
+  margin-top: 14px;
+  position: relative;
+  opacity: 0.9;
 }
 
 @media (max-width: 768px) {

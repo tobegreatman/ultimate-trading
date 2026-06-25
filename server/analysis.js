@@ -874,43 +874,71 @@ async function fetchPMI() {
 }
 
 async function fetchM2() {
-  const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_CURRENCY_SUPPLY&columns=REPORT_DATE,TIME,BASIC_CURRENCY_SAME,CURRENCY_SAME,FREE_CASH_SAME,BASIC_CURRENCY_SEQUENTIAL,CURRENCY_SEQUENTIAL&pageSize=6&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB'
+  const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_CURRENCY_SUPPLY&columns=REPORT_DATE,TIME,BASIC_CURRENCY,BASIC_CURRENCY_SAME,BASIC_CURRENCY_SEQUENTIAL,CURRENCY,CURRENCY_SAME,CURRENCY_SEQUENTIAL,FREE_CASH,FREE_CASH_SAME,FREE_CASH_SEQUENTIAL&pageSize=12&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB'
   const data = await fetchJSON(url)
   const items = data.result?.data || []
   if (!items.length) return null
-  const m2Same = items[0].BASIC_CURRENCY_SAME
-  const m1Same = items[0].CURRENCY_SAME
+  const cur = items[0]
+  const prev = items[1]
   return {
     label: 'M2/M1',
     unit: '%',
-    m2Same,
-    m1Same,
-    m1m2Scissors: +(m1Same - m2Same).toFixed(1),
-    prevM2Same: items[1]?.BASIC_CURRENCY_SAME || null,
-    prevM1Same: items[1]?.CURRENCY_SAME || null,
-    prevScissors: items[1] ? +(items[1].CURRENCY_SAME - items[1].BASIC_CURRENCY_SAME).toFixed(1) : null,
-    m2Sequential: items[0].BASIC_CURRENCY_SEQUENTIAL,
-    date: items[0].TIME,
-    history: items.slice(0, 6).map(i => ({ date: i.TIME, m2: i.BASIC_CURRENCY_SAME, m1: i.CURRENCY_SAME }))
+    m2Same: cur.BASIC_CURRENCY_SAME,
+    m1Same: cur.CURRENCY_SAME,
+    m0Same: cur.FREE_CASH_SAME,
+    m0Sequential: cur.FREE_CASH_SEQUENTIAL,
+    // 余额（万亿元）
+    m2Balance: +(cur.BASIC_CURRENCY / 10000).toFixed(2),
+    m1Balance: +(cur.CURRENCY / 10000).toFixed(2),
+    m0Balance: +(cur.FREE_CASH / 10000).toFixed(2),
+    m1m2Scissors: +(cur.CURRENCY_SAME - cur.BASIC_CURRENCY_SAME).toFixed(1),
+    prevM2Same: prev?.BASIC_CURRENCY_SAME || null,
+    prevM1Same: prev?.CURRENCY_SAME || null,
+    prevScissors: prev ? +(prev.CURRENCY_SAME - prev.BASIC_CURRENCY_SAME).toFixed(1) : null,
+    m2Sequential: cur.BASIC_CURRENCY_SEQUENTIAL,
+    date: cur.TIME,
+    history: items.slice(0, 12).map(i => ({
+      date: i.TIME,
+      m2: i.BASIC_CURRENCY_SAME,
+      m1: i.CURRENCY_SAME,
+      m0: i.FREE_CASH_SAME,
+      scissors: +(i.CURRENCY_SAME - i.BASIC_CURRENCY_SAME).toFixed(1),
+    })),
   }
 }
 
 async function fetchGDP() {
-  const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_GDP&columns=REPORT_DATE,TIME,SUM_SAME,FIRST_SAME,SECOND_SAME,THIRD_SAME&pageSize=4&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB'
+  const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_GDP&columns=REPORT_DATE,TIME,DOMESTICL_PRODUCT_BASE,FIRST_PRODUCT_BASE,SECOND_PRODUCT_BASE,THIRD_PRODUCT_BASE,SUM_SAME,FIRST_SAME,SECOND_SAME,THIRD_SAME&pageSize=8&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB'
   const data = await fetchJSON(url)
   const items = data.result?.data || []
   if (!items.length) return null
+  const cur = items[0]
+  const total = cur.DOMESTICL_PRODUCT_BASE
   return {
     label: 'GDP',
     unit: '%',
-    gdpSame: items[0].SUM_SAME,
+    gdpSame: cur.SUM_SAME,
     prevGdpSame: items[1]?.SUM_SAME || null,
-    // 成分组成：三次产业同比（用于结构分析 — 第二产业=工业/周期领先，第三产业=服务业）
-    firstSame: items[0].FIRST_SAME,
-    secondSame: items[0].SECOND_SAME,
-    thirdSame: items[0].THIRD_SAME,
-    date: items[0].TIME,
-    history: items.slice(0, 4).map(i => ({ date: i.TIME, gdp: i.SUM_SAME }))
+    // 三次产业同比
+    firstSame: cur.FIRST_SAME,
+    secondSame: cur.SECOND_SAME,
+    thirdSame: cur.THIRD_SAME,
+    // 三次产业绝对值（亿元）与结构占比（%）
+    gdpBase: total,
+    firstBase: cur.FIRST_PRODUCT_BASE,
+    secondBase: cur.SECOND_PRODUCT_BASE,
+    thirdBase: cur.THIRD_PRODUCT_BASE,
+    firstRatio: +(cur.FIRST_PRODUCT_BASE / total * 100).toFixed(1),
+    secondRatio: +(cur.SECOND_PRODUCT_BASE / total * 100).toFixed(1),
+    thirdRatio: +(cur.THIRD_PRODUCT_BASE / total * 100).toFixed(1),
+    date: cur.TIME,
+    history: items.slice(0, 8).map(i => ({
+      date: i.TIME,
+      gdp: i.SUM_SAME,
+      first: i.FIRST_SAME,
+      second: i.SECOND_SAME,
+      third: i.THIRD_SAME,
+    })),
   }
 }
 
@@ -929,6 +957,365 @@ async function fetchPPI() {
     accumulate: items[0].BASE_ACCUMULATE,
     date: items[0].TIME,
     history: items.slice(0, 6).map(i => ({ date: i.TIME, same: i.BASE_SAME }))
+  }
+}
+
+// ==================== 国家统计局分项数据爬取 ====================
+// 国家统计局月度新闻稿含 CPI 8大类 / PPI 行业 / PMI 分项的完整表格
+// 列表页 https://www.stats.gov.cn/sj/zxfbhjd/index.html 用于发现最新文章 URL
+
+const STATS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+async function fetchStatsText(url, timeoutMs = 12000) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  const res = await fetch(url, {
+    headers: { 'User-Agent': STATS_UA, 'Accept': 'text/html,*/*' },
+    signal: ctrl.signal
+  })
+  clearTimeout(timer)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return await res.text()
+}
+
+// 从国家统计局列表页找最新匹配文章 URL（支持翻页搜索）
+async function findStatsArticleUrl(keyword, maxPages = 3) {
+  const regex = new RegExp(`href="([^"]+)"[^>]*>\\s*([^<]*${keyword}[^<]*)`, 'i')
+  for (let p = 0; p < maxPages; p++) {
+    const listUrl = p === 0
+      ? 'https://www.stats.gov.cn/sj/zxfb/'
+      : `https://www.stats.gov.cn/sj/zxfb/index_${p}.html`
+    try {
+      const html = await fetchStatsText(listUrl)
+      const m = html.match(regex)
+      if (m) {
+        let url = m[1]
+        if (url.startsWith('./')) url = url.replace('./', 'https://www.stats.gov.cn/sj/zxfb/')
+        else if (url.startsWith('/')) url = 'https://www.stats.gov.cn' + url
+        return url
+      }
+    } catch (e) { /* 翻页失败继续下一页 */ }
+  }
+  return null
+}
+
+// 解析 HTML 表格所有行 → 二维数组（去除标签）
+function parseHTMLRows(html) {
+  const rows = []
+  const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/g
+  let trMatch
+  while ((trMatch = trRegex.exec(html))) {
+    const tds = []
+    const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/g
+    let tdMatch
+    while ((tdMatch = tdRegex.exec(trMatch[1]))) {
+      tds.push(tdMatch[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim())
+    }
+    if (tds.length) rows.push(tds)
+  }
+  return rows
+}
+
+// CPI 8大类分项（食品烟酒/衣着/居住/生活用品/交通通信/教育文娱/医疗保健/其他用品）
+const cpiDetailCache = { data: null, ts: 0 }
+const CPI_DETAIL_CACHE_TTL = 12 * 60 * 60 * 1000
+
+async function fetchCPIDetail() {
+  if (cpiDetailCache.data && Date.now() - cpiDetailCache.ts < CPI_DETAIL_CACHE_TTL) {
+    return cpiDetailCache.data
+  }
+  try {
+    const articleUrl = await findStatsArticleUrl('居民消费价格')
+    if (!articleUrl) return null
+    const html = await fetchStatsText(articleUrl)
+    const rows = parseHTMLRows(html)
+
+    const categories = []
+    for (const row of rows) {
+      const m = row[0].match(/^[一二三四五六七八]、(.+)/)
+      if (m && row.length >= 3) {
+        categories.push({
+          name: m[1].trim(),
+          sequential: parseFloat(row[1]),   // 环比
+          yoy: parseFloat(row[2]),           // 同比
+          accumulate: row[3] ? parseFloat(row[3]) : null
+        })
+      }
+    }
+    if (categories.length < 8) return null
+
+    const result = { categories: categories.slice(0, 8), source: 'stats.gov.cn' }
+    cpiDetailCache.data = result
+    cpiDetailCache.ts = Date.now()
+    return result
+  } catch (e) {
+    console.warn('CPI detail fetch failed:', e.message)
+    return null
+  }
+}
+
+// PPI 行业分项（有色/煤炭/化工/黑色/石油等主要工业行业同比）
+const ppiDetailCache = { data: null, ts: 0 }
+const PPI_DETAIL_CACHE_TTL = 12 * 60 * 60 * 1000
+
+async function fetchPPIDetail() {
+  if (ppiDetailCache.data && Date.now() - ppiDetailCache.ts < PPI_DETAIL_CACHE_TTL) {
+    return ppiDetailCache.data
+  }
+  try {
+    const articleUrl = await findStatsArticleUrl('工业生产者出厂价格')
+    if (!articleUrl) return null
+    const html = await fetchStatsText(articleUrl)
+    const rows = parseHTMLRows(html)
+
+    // PPI 新闻稿表格列顺序: [名称, 环比, 同比, 累计]
+    // 排除分类标题行（"一、""二、"开头），去重（页面可能含重复表格）
+    const industries = []
+    const seen = new Set()
+    for (const row of rows) {
+      if (row.length >= 3 && row[0].length > 2 && row[0].includes('业')
+          && !/^[一二三四五六七八九十]、/.test(row[0])) {
+        const yoy = parseFloat(row[2])  // 第3列：同比
+        if (!isNaN(yoy) && !seen.has(row[0])) {
+          seen.add(row[0])
+          industries.push({ name: row[0].replace(/^\s+/, ''), yoy })
+        }
+      }
+    }
+    if (!industries.length) return null
+
+    const result = { industries: industries.slice(0, 15), source: 'stats.gov.cn' }
+    ppiDetailCache.data = result
+    ppiDetailCache.ts = Date.now()
+    return result
+  } catch (e) {
+    console.warn('PPI detail fetch failed:', e.message)
+    return null
+  }
+}
+
+// PMI 分项（制造业5项扩散指数：新订单/生产/从业人员/原材料库存/供应商配送时间）
+const pmiDetailCache = { data: null, ts: 0 }
+const PMI_DETAIL_CACHE_TTL = 12 * 60 * 60 * 1000
+
+async function fetchPMIDetail() {
+  if (pmiDetailCache.data && Date.now() - pmiDetailCache.ts < PMI_DETAIL_CACHE_TTL) {
+    return pmiDetailCache.data
+  }
+  try {
+    const articleUrl = await findStatsArticleUrl('采购经理指数')
+    if (!articleUrl) return null
+    const html = await fetchStatsText(articleUrl)
+    // 去标签后的纯文本，用于正则匹配正文
+    const text = html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ')
+
+    // 从正文提取制造业5项扩散指数 + 非制造业商务活动指数
+    // 例: "生产指数为51.2%，比上月下降0.3个百分点"
+    const patterns = [
+      { name: '生产', re: /生产指数为(\d+\.?\d*)%/ },
+      { name: '新订单', re: /新订单指数为(\d+\.?\d*)%/ },
+      { name: '原材料库存', re: /原材料库存指数为(\d+\.?\d*)%/ },
+      { name: '从业人员', re: /从业人员指数为(\d+\.?\d*)%/ },
+      { name: '供应商配送时间', re: /供应商配送时间指数为(\d+\.?\d*)%/ },
+      { name: '非制造业商务活动', re: /非制造业商务活动指数为(\d+\.?\d*)%/ },
+    ]
+    const items = []
+    for (const p of patterns) {
+      const m = text.match(p.re)
+      if (m) {
+        items.push({ name: p.name, index: parseFloat(m[1]) })
+      }
+    }
+    if (!items.length) return null
+
+    const result = { items, source: 'stats.gov.cn' }
+    pmiDetailCache.data = result
+    pmiDetailCache.ts = Date.now()
+    return result
+  } catch (e) {
+    console.warn('PMI detail fetch failed:', e.message)
+    return null
+  }
+}
+
+// 社融分项（8项：人民币贷款/外币贷款/委托贷款/信托贷款/未贴现银承/企业债券/政府债券/股票融资）
+// 数据源：央行新闻通稿列表页 → 最新"金融统计数据报告" → 正文解析年初累计分项
+const sfDetailCache = { data: null, ts: 0 }
+const SF_DETAIL_CACHE_TTL = 12 * 60 * 60 * 1000
+
+async function findPbcArticleUrl() {
+  const listUrl = 'http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html'
+  const html = await fetchStatsText(listUrl)
+  const m = html.match(/href="([^"]+)"[^>]*>[^<]*金融统计数据报告[^<]*</)
+  if (!m) return null
+  let url = m[1]
+  if (url.startsWith('/')) url = 'http://www.pbc.gov.cn' + url
+  return url
+}
+
+async function fetchSfDetail() {
+  if (sfDetailCache.data && Date.now() - sfDetailCache.ts < SF_DETAIL_CACHE_TTL) {
+    return sfDetailCache.data
+  }
+  try {
+    const articleUrl = await findPbcArticleUrl()
+    if (!articleUrl) return null
+    const html = await fetchStatsText(articleUrl)
+    const text = html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ')
+
+    // 定位社融增量段落
+    const sfStart = text.indexOf('社会融资规模增量累计为')
+    if (sfStart < 0) return null
+    const section = text.substring(sfStart, sfStart + 800)
+
+    const items = []
+    // 统一格式：6个捕获组 = (增减词, 数字, 单位, 同比词, 同比数字, 同比单位)
+    // 增减词为"减少"时增量为负，其余为正；同比词为"少增/多减/少"时同比为负
+    const specs = [
+      { name: '人民币贷款', re: /对实体经济发放的人民币贷款(增加)([\d.]+)(万亿元|亿元)，同比(多增|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+      { name: '外币贷款', re: /对实体经济发放的外币贷款折合人民币(增加)([\d.]+)(万亿元|亿元)，同比(多增|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+      { name: '委托贷款', re: /委托贷款(增加|减少)([\d.]+)(万亿元|亿元)，同比(多增|多减|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+      { name: '信托贷款', re: /信托贷款(增加|减少)([\d.]+)(万亿元|亿元)，同比(多增|多减|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+      { name: '未贴现银承', re: /未贴现的银行承兑汇票(增加|减少)([\d.]+)(万亿元|亿元)，同比(多增|多减|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+      { name: '企业债券', re: /企业债券净融资(增加)?([\d.]+)(万亿元|亿元)，同比(多增|多减|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+      { name: '政府债券', re: /政府债券净融资(增加)?([\d.]+)(万亿元|亿元)，同比(多增|多减|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+      { name: '股票融资', re: /非金融企业境内股票融资(增加)?([\d.]+)(万亿元|亿元)，同比(多增|多减|少增|多|少)([\d.]+)(万亿元|亿元)/ },
+    ]
+    for (const s of specs) {
+      const m = section.match(s.re)
+      if (m) {
+        const toYi = (val, unit) => unit === '万亿元' ? Math.round(parseFloat(val) * 10000) : Math.round(parseFloat(val))
+        const increment = (m[1] === '减少' ? -1 : 1) * toYi(m[2], m[3])
+        const yoySign = (m[4] === '少增' || m[4] === '多减' || m[4] === '少') ? -1 : 1
+        const yoyChange = yoySign * toYi(m[5], m[6])
+        items.push({ name: s.name, increment, yoyChange })
+      }
+    }
+
+    if (items.length < 6) return null
+
+    // 提取累计期描述（如"前五个月"）
+    const periodMatch = section.match(/(\d{4}年(?:前[\d一二三四五六七八九十]+个月|前[\d一二三四五六七八九十]+季度))社会融资规模增量累计为/)
+    const period = periodMatch ? periodMatch[1] : ''
+
+    const result = { items, period, source: 'pbc.gov.cn' }
+    sfDetailCache.data = result
+    sfDetailCache.ts = Date.now()
+    return result
+  } catch (e) {
+    console.warn('SF detail fetch failed:', e.message)
+    return null
+  }
+}
+
+// 存款分项（住户/企业/财政/非银）— 复用央行"金融统计数据报告"
+const depositDetailCache = { data: null, ts: 0 }
+const DEPOSIT_DETAIL_CACHE_TTL = 12 * 60 * 60 * 1000
+
+async function fetchDepositDetail() {
+  if (depositDetailCache.data && Date.now() - depositDetailCache.ts < DEPOSIT_DETAIL_CACHE_TTL) {
+    return depositDetailCache.data
+  }
+  try {
+    const articleUrl = await findPbcArticleUrl()
+    if (!articleUrl) return null
+    const html = await fetchStatsText(articleUrl)
+    const text = html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ')
+
+    // 定位存款分项段落："其中，住户存款增加X万亿元，非金融企业存款增加..."
+    const depStart = text.indexOf('人民币存款增加')
+    if (depStart < 0) return null
+    const section = text.substring(depStart, depStart + 400)
+
+    const items = []
+    const specs = [
+      { name: '住户存款', re: /住户存款增加([\d.]+)万亿元/ },
+      { name: '非金融企业存款', re: /非金融企业存款增加([\d.]+)万亿元/ },
+      { name: '财政性存款', re: /财政性存款增加([\d.]+)万亿元/ },
+      { name: '非银行业金融机构存款', re: /非银行业金融机构存款增加([\d.]+)万亿元/ },
+    ]
+    for (const s of specs) {
+      const m = section.match(s.re)
+      if (m) items.push({ name: s.name, increment: +m[1] })
+    }
+    if (items.length < 3) return null
+
+    // 存款余额与同比
+    const balMatch = text.match(/人民币存款余额([\d.]+)万亿元，同比增长([\d.]+)%/)
+    const totalDeposit = balMatch ? +balMatch[1] : null
+    const totalDepositYoy = balMatch ? +balMatch[2] : null
+
+    // 累计期
+    const periodMatch = text.match(/前([\d一二三四五六七八九十]+)个月人民币存款增加/)
+    const period = periodMatch ? `前${periodMatch[1]}个月` : ''
+
+    const result = { items, totalDeposit, totalDepositYoy, period, source: 'pbc.gov.cn' }
+    depositDetailCache.data = result
+    depositDetailCache.ts = Date.now()
+    return result
+  } catch (e) {
+    console.warn('Deposit detail fetch failed:', e.message)
+    return null
+  }
+}
+
+// GDP 分行业增加值 — 国家统计局"GDP初步核算结果"文章表1
+const gdpDetailCache = { data: null, ts: 0 }
+const GDP_DETAIL_CACHE_TTL = 24 * 60 * 60 * 1000
+
+async function fetchGdpDetail() {
+  if (gdpDetailCache.data && Date.now() - gdpDetailCache.ts < GDP_DETAIL_CACHE_TTL) {
+    return gdpDetailCache.data
+  }
+  try {
+    const articleUrl = await findStatsArticleUrl('国内生产总值初步核算结果', 4)
+    if (!articleUrl) return null
+    const html = await fetchStatsText(articleUrl)
+    const text = html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ')
+
+    // 定位表1区域
+    const t1Start = text.indexOf('表1')
+    if (t1Start < 0) return null
+    const t1End = text.indexOf('注：', t1Start)
+    if (t1End < 0) return null
+    const table = text.substring(t1Start, t1End)
+
+    // 解析分行业行：名称 绝对额(亿元) 同比(%)
+    // 格式如 "工业 103388 6.1" / "建筑业 13632 -3.8" / "#制造业 86960 6.3"
+    const industries = []
+    const rowRe = /([\u4e00-\u9fa5#、]+)\s+([\d.]+)\s+(-?[\d.]+)/g
+    let m
+    const seen = new Set()
+    while ((m = rowRe.exec(table)) !== null) {
+      const name = m[1].replace(/^#/, '')
+      if (seen.has(name)) continue
+      seen.add(name)
+      // 排除表头文字
+      if (['绝对额', '比上年同期增长', 'GDP', '第一产业', '第二产业', '第三产业', '农林牧渔业'].includes(name)) continue
+      industries.push({ name, base: +m[2], yoy: +m[3] })
+    }
+    if (industries.length < 5) return null
+
+    // 提取季度标题
+    const titleMatch = text.match(/(\d{4}年[一二三四]季度)GDP初步核算/)
+    const quarter = titleMatch ? titleMatch[1] : ''
+
+    // GDP 环比增速（表3）
+    const t3Idx = text.indexOf('表3')
+    let qoq = null
+    if (t3Idx >= 0) {
+      const t3Section = text.substring(t3Idx, t3Idx + 300)
+      const qoqMatch = t3Section.match(/2026\s+([\d.]+)/)
+      if (qoqMatch) qoq = +qoqMatch[1]
+    }
+
+    const result = { industries, quarter, qoq, source: 'stats.gov.cn' }
+    gdpDetailCache.data = result
+    gdpDetailCache.ts = Date.now()
+    return result
+  } catch (e) {
+    console.warn('GDP detail fetch failed:', e.message)
+    return null
   }
 }
 
@@ -1031,67 +1418,168 @@ async function fetchSocialFinancing() {
  *  GDP结构：二产(工业)偏弱但总量达标 → -0.3；工业领涨 → +0.3
  *  CPI城乡：显著背离时提示（弱信号，不打分）
  */
+// 宏观因子评分体系（v2）
+// 权重：PMI 1.5 / M2 1 / 社融 1 / CPI 0.5 / PPI 0.5 / GDP 0.5
+// 区间：±0.3 / ±0.5 / ±1 多档，总分 clamp [-3, 3]
+// 新增维度：PPI评分、货币-信用组合、PMI环比方向、CPI-PPI剪刀差、存款结构、社融结构
 function scoreMacroFactors(cpi, pmi, m2, gdp, sf, ppi) {
   let score = 0
   const details = []
 
+  // ===== PMI（权重1.5，月度领先指标，最高权重）=====
+  // 双因子：绝对水平 + 环比方向
   if (pmi) {
-    if (pmi.makeIndex > 50.5) { score += 1; details.push({ factor: 'PMI', value: pmi.makeIndex, signal: 'positive', desc: `制造业PMI ${pmi.makeIndex}，扩张区间` }) }
-    else if (pmi.makeIndex < 49.5) { score -= 1; details.push({ factor: 'PMI', value: pmi.makeIndex, signal: 'negative', desc: `制造业PMI ${pmi.makeIndex}，收缩区间` }) }
-    else { details.push({ factor: 'PMI', value: pmi.makeIndex, signal: 'neutral', desc: `制造业PMI ${pmi.makeIndex}，临界附近` }) }
+    const idx = pmi.makeIndex
+    const prev = pmi.prevMake
+    const delta = prev != null ? +(idx - prev).toFixed(2) : null
+    let pmiScore = 0
+    // 绝对水平
+    if (idx > 51) pmiScore += 1
+    else if (idx > 50.5) pmiScore += 0.5
+    else if (idx < 49) pmiScore -= 1
+    else if (idx < 49.5) pmiScore -= 0.5
+    // 环比方向（趋势确认）
+    if (delta != null) {
+      if (delta > 0.5) pmiScore += 0.5
+      else if (delta < -0.5) pmiScore -= 0.5
+    }
+    pmiScore = Math.max(-1.5, Math.min(1.5, pmiScore))
+    score += pmiScore
+    const trend = delta != null ? (delta > 0 ? `环比+${delta}` : `环比${delta}`) : ''
+    const signal = pmiScore > 0.3 ? 'positive' : pmiScore < -0.3 ? 'negative' : 'neutral'
+    details.push({ factor: 'PMI', value: idx, signal, desc: `制造业PMI ${idx}${trend ? '，' + trend : ''}，${idx >= 50 ? '扩张区间' : '收缩区间'}${delta != null && delta > 0 ? '且改善' : delta != null && delta < 0 ? '但走弱' : ''}` })
   }
 
+  // ===== M2/M1（权重1）=====
+  // 双因子：剪刀差绝对水平 + 环比变化方向
   if (m2) {
     const scissors = m2.m1m2Scissors
     const prevScissors = m2.prevScissors
-    if (scissors != null && prevScissors != null) {
-      if (scissors > prevScissors) { score += 1; details.push({ factor: 'M1-M2剪刀差', value: scissors, signal: 'positive', desc: `剪刀差${scissors}%，较上月收窄，企业活力增强` }) }
-      else if (scissors < prevScissors) { score -= 1; details.push({ factor: 'M1-M2剪刀差', value: scissors, signal: 'negative', desc: `剪刀差${scissors}%，较上月扩大，企业活力下降` }) }
-      else { details.push({ factor: 'M1-M2剪刀差', value: scissors, signal: 'neutral', desc: `剪刀差${scissors}%，与上月持平` }) }
+    let m2Score = 0
+    if (scissors != null) {
+      // 绝对水平：剪刀差越接近0越好，深度负值=企业活期存款收缩、经营活力弱
+      if (scissors > -1) m2Score += 0.5
+      else if (scissors < -5) m2Score -= 0.5
+      // 环比方向：收窄=改善
+      if (prevScissors != null) {
+        if (scissors > prevScissors) m2Score += 0.5
+        else if (scissors < prevScissors) m2Score -= 0.5
+      }
     }
+    // M0 高增 = 消费/交易活跃（领先指标）
+    if (m2.m0Same != null) {
+      if (m2.m0Same > 12) m2Score += 0.3
+      else if (m2.m0Same < 0) m2Score -= 0.3
+    }
+    m2Score = Math.max(-1, Math.min(1, m2Score))
+    score += m2Score
+    const signal = m2Score > 0.3 ? 'positive' : m2Score < -0.3 ? 'negative' : 'neutral'
+    const trend = (scissors != null && prevScissors != null) ? (scissors > prevScissors ? '收窄' : '扩大') : ''
+    details.push({ factor: 'M1-M2剪刀差', value: scissors, signal, desc: `剪刀差${scissors}%${trend ? '，' + trend : ''}；M0 ${m2.m0Same ?? '-'}%` })
   }
 
-  if (cpi) {
-    if (cpi.current > 2) { score -= 0.5; details.push({ factor: 'CPI', value: cpi.current, signal: 'negative', desc: `CPI ${cpi.current}%，通胀压力偏强` }) }
-    else if (cpi.current < 0) { score -= 1; details.push({ factor: 'CPI', value: cpi.current, signal: 'negative', desc: `CPI ${cpi.current}%，通缩风险` }) }
-    else { details.push({ factor: 'CPI', value: cpi.current, signal: 'neutral', desc: `CPI ${cpi.current}%，温和水平` }) }
-  }
-
-  if (gdp) {
-    if (gdp.gdpSame > 5.5) { score += 0.5; details.push({ factor: 'GDP', value: gdp.gdpSame, signal: 'positive', desc: `GDP增速${gdp.gdpSame}%，偏强` }) }
-    else if (gdp.gdpSame < 4.5) { score -= 0.5; details.push({ factor: 'GDP', value: gdp.gdpSame, signal: 'negative', desc: `GDP增速${gdp.gdpSame}%，偏弱` }) }
-    else { details.push({ factor: 'GDP', value: gdp.gdpSame, signal: 'neutral', desc: `GDP增速${gdp.gdpSame}%，平稳` }) }
-  }
-
+  // ===== 社融（权重1）=====
+  // 双因子：实际增速 + 结构（政府债独撑 vs 信贷扩张）
   if (sf && sf.stockYoyGrowth != null) {
-    // 成分组成维度：用 PPI 把名义增速还原成实际增速
-    // 实际增速 ≈ 名义增速 - PPI同比（Fisher 近似）。社融主投实体，PPI 是工业品价格，
-    // 平减后即可区分"价格被动虚增"与"真实融资需求"——对应企事业贷款的被动/真实之分
     const nominalG = sf.stockYoyGrowth
     const ppiInflation = ppi?.current
     const realG = ppiInflation != null ? +(nominalG - ppiInflation).toFixed(1) : nominalG
     const hasDeflator = ppiInflation != null
+    let sfScore = 0
+    if (realG > 8) sfScore += 0.5
+    else if (realG > 5) sfScore += 0.3
+    else if (realG < -5) sfScore -= 0.5
+    else if (realG < 0) sfScore -= 0.3
 
-    if (realG > 5) {
-      score += 0.5; details.push({ factor: '社融', value: realG, signal: 'positive',
-        desc: hasDeflator ? `社融实际增速${realG}%(名义${nominalG}%剔除PPI ${ppiInflation}%)，信用扩张扎实` : `社融年增量同比+${nominalG}%，信用扩张偏强` })
-    } else if (realG < -5) {
-      score -= 0.5; details.push({ factor: '社融', value: realG, signal: 'negative',
-        desc: hasDeflator ? `社融实际增速${realG}%(名义${nominalG}%剔除PPI)，信用扩张放缓` : `社融年增量同比${nominalG}%，信用扩张放缓` })
-    } else if (hasDeflator && nominalG > 5 && realG <= 5) {
-      // 名义看着强、剔除价格后转弱 → 价格虚增，不加分并明确提示
-      details.push({ factor: '社融', value: realG, signal: 'neutral',
-        desc: `社融名义${nominalG}%看似扩张，剔除PPI后实际仅${realG}%，部分为价格推动` })
-    } else {
-      details.push({ factor: '社融', value: realG, signal: 'neutral',
-        desc: hasDeflator ? `社融实际增速${realG}%(名义${nominalG}%)，基本平稳` : `社融年增量同比${nominalG}%，基本平稳` })
+    // 结构：社融分项中人民币贷款 vs 政府债券
+    const sfDetail = sf.detail
+    if (sfDetail?.items?.length) {
+      const loanItem = sfDetail.items.find(i => i.name === '人民币贷款')
+      const govItem = sfDetail.items.find(i => i.name === '政府债券')
+      if (loanItem) {
+        // 信贷弱+政府债强 = 财政独撑、实体需求弱，含金量低
+        if (loanItem.yoyChange < 0 && govItem && govItem.yoyChange > 0) {
+          sfScore -= 0.3
+          details.push({ factor: '社融结构', value: loanItem.yoyChange, signal: 'negative', desc: `信贷同比少增${Math.abs(loanItem.yoyChange)}亿、政府债多增${govItem.yoyChange}亿，财政独撑、实体需求偏弱` })
+        } else if (loanItem.yoyChange > 0) {
+          sfScore += 0.3
+          details.push({ factor: '社融结构', value: loanItem.yoyChange, signal: 'positive', desc: `人民币贷款同比多增${loanItem.yoyChange}亿，实体信贷扩张扎实` })
+        } else if (loanItem.yoyChange < -5000) {
+          // 信贷大幅少增（即使政府债也弱）= 实体融资需求疲软
+          sfScore -= 0.3
+          details.push({ factor: '社融结构', value: loanItem.yoyChange, signal: 'negative', desc: `人民币贷款同比少增${Math.abs(loanItem.yoyChange)}亿，实体信贷需求疲软` })
+        }
+      }
+    }
+
+    sfScore = Math.max(-1, Math.min(1, sfScore))
+    score += sfScore
+    const signal = sfScore > 0.3 ? 'positive' : sfScore < -0.3 ? 'negative' : 'neutral'
+    details.push({ factor: '社融', value: realG, signal, desc: hasDeflator ? `社融实际增速${realG}%(名义${nominalG}%剔除PPI)` : `社融年增量同比${nominalG}%` })
+  }
+
+  // ===== CPI（权重0.5）=====
+  if (cpi) {
+    let cpiScore = 0
+    if (cpi.current > 3) cpiScore -= 0.5
+    else if (cpi.current > 2) cpiScore -= 0.3
+    else if (cpi.current < 0) cpiScore -= 0.5
+    else if (cpi.current >= 0 && cpi.current <= 2) cpiScore += 0.3
+    score += cpiScore
+    const signal = cpiScore > 0.1 ? 'positive' : cpiScore < -0.1 ? 'negative' : 'neutral'
+    const desc = cpi.current > 2 ? `CPI ${cpi.current}%，通胀压力偏强` : cpi.current < 0 ? `CPI ${cpi.current}%，通缩风险` : `CPI ${cpi.current}%，温和水平`
+    details.push({ factor: 'CPI', value: cpi.current, signal, desc })
+  }
+
+  // ===== PPI（权重0.5，新增）=====
+  // PPI 转正/环比改善 = 工业周期回暖，强信号
+  if (ppi) {
+    let ppiScore = 0
+    if (ppi.current > 3) ppiScore += 0.5
+    else if (ppi.current > 0) ppiScore += 0.3
+    else if (ppi.current < -3) ppiScore -= 0.5
+    else if (ppi.current < 0) ppiScore -= 0.3
+    // 环比改善
+    if (ppi.prev != null) {
+      if (ppi.current > ppi.prev) ppiScore += 0.3
+      else if (ppi.current < ppi.prev) ppiScore -= 0.3
+    }
+    ppiScore = Math.max(-0.5, Math.min(0.5, ppiScore))
+    score += ppiScore
+    const signal = ppiScore > 0.1 ? 'positive' : ppiScore < -0.1 ? 'negative' : 'neutral'
+    const trend = ppi.prev != null ? (ppi.current > ppi.prev ? '涨幅扩大' : ppi.current < ppi.prev ? '跌幅加深' : '持平') : ''
+    details.push({ factor: 'PPI', value: ppi.current, signal, desc: `PPI ${ppi.current}%${trend ? '，' + trend : ''}，${ppi.current >= 0 ? '工业品价格回升' : '工业品价格仍承压'}` })
+  }
+
+  // ===== CPI-PPI 剪刀差（组合维度，反映上下游利润分配）=====
+  if (cpi && ppi && cpi.current != null && ppi.current != null) {
+    const cp = +(cpi.current - ppi.current).toFixed(1)
+    // CPI-PPI 过大 = 下游涨价但上游通缩，制造业利润受挤压
+    if (cp > 5) {
+      score -= 0.3
+      details.push({ factor: 'CPI-PPI剪刀差', value: cp, signal: 'negative', desc: `CPI-PPI差${cp}个百分点，上下游价格背离，制造业利润受挤压` })
+    } else if (cp >= 0 && cp <= 3) {
+      details.push({ factor: 'CPI-PPI剪刀差', value: cp, signal: 'neutral', desc: `CPI-PPI差${cp}个百分点，价格传导顺畅` })
+    } else if (cp < 0) {
+      details.push({ factor: 'CPI-PPI剪刀差', value: cp, signal: 'positive', desc: `PPI高于CPI ${Math.abs(cp)}个百分点，上游成本推动，需警惕输入型通胀` })
     }
   }
 
-  // 成分组成维度：GDP 三次产业结构 —— 总量可能达标，但结构（工业强弱）决定可持续性
+  // ===== GDP（权重0.5，滞后确认指标）=====
+  if (gdp) {
+    let gdpScore = 0
+    if (gdp.gdpSame > 5.5) gdpScore += 0.5
+    else if (gdp.gdpSame < 4.5) gdpScore -= 0.5
+    else gdpScore += 0.3
+    score += gdpScore
+    const signal = gdpScore > 0.1 ? 'positive' : gdpScore < -0.1 ? 'negative' : 'neutral'
+    details.push({ factor: 'GDP', value: gdp.gdpSame, signal, desc: `GDP增速${gdp.gdpSame}%，${gdp.gdpSame > 5.5 ? '偏强' : gdp.gdpSame < 4.5 ? '偏弱' : '平稳'}` })
+  }
+
+  // ===== GDP 结构（成分组成维度）=====
   if (gdp && gdp.secondSame != null && gdp.thirdSame != null) {
-    const ind = gdp.secondSame   // 第二产业（工业，周期领先指标）
-    const svc = gdp.thirdSame    // 第三产业（服务业）
+    const ind = gdp.secondSame
+    const svc = gdp.thirdSame
     if (gdp.gdpSame >= 5 && ind < 4) {
       score -= 0.3; details.push({ factor: 'GDP结构', value: ind, signal: 'negative', desc: `总量${gdp.gdpSame}%但二产(工业)仅${ind}%，制造业/投资偏弱` })
     } else if (ind >= 5.5 && svc < 4) {
@@ -1103,7 +1591,44 @@ function scoreMacroFactors(cpi, pmi, m2, gdp, sf, ppi) {
     }
   }
 
-  // 成分组成维度：CPI 城乡分化 —— 弱信号，仅显著背离时提示，不打分避免噪声
+  // ===== 货币-信用组合（新增，组合维度）=====
+  // M2 增速 vs 社融实际增速四象限：判断政策传导效率
+  if (m2 && sf && m2.m2Same != null && sf.stockYoyGrowth != null) {
+    const m2G = m2.m2Same
+    const sfG = sf.stockYoyGrowth
+    const m2High = m2G >= 8
+    const sfHigh = sfG >= 8
+    if (m2High && sfHigh) {
+      score += 0.5; details.push({ factor: '货币-信用', value: `${m2G}/${sfG}`, signal: 'positive', desc: `宽货币(M2 ${m2G}%)+宽信用(社融${sfG}%)，政策传导顺畅，流动性充裕` })
+    } else if (m2High && !sfHigh) {
+      score -= 0.3; details.push({ factor: '货币-信用', value: `${m2G}/${sfG}`, signal: 'negative', desc: `宽货币(M2 ${m2G}%)+紧信用(社融${sfG}%)，资金淤积金融体系，实体需求弱` })
+    } else if (!m2High && sfHigh) {
+      details.push({ factor: '货币-信用', value: `${m2G}/${sfG}`, signal: 'neutral', desc: `稳货币(M2 ${m2G}%)+宽信用(社融${sfG}%)，信用自主扩张` })
+    } else {
+      details.push({ factor: '货币-信用', value: `${m2G}/${sfG}`, signal: 'neutral', desc: `M2 ${m2G}%/社融${sfG}%，双稳` })
+    }
+  }
+
+  // ===== 存款结构（新增，成分组成维度）=====
+  // 住户存款占比过高 = 预防性储蓄、消费意愿弱
+  if (m2?.detail?.items?.length) {
+    const items = m2.detail.items
+    const household = items.find(i => i.name === '住户存款')
+    const enterprise = items.find(i => i.name === '非金融企业存款')
+    if (household && enterprise) {
+      const total = items.reduce((s, i) => s + i.increment, 0)
+      const hhRatio = total > 0 ? +(household.increment / total * 100).toFixed(0) : 0
+      const entRatio = total > 0 ? +(enterprise.increment / total * 100).toFixed(0) : 0
+      // 住户存款占比显著高于企业 = 资金回流居民、企业活化弱
+      if (hhRatio > 35 && hhRatio > entRatio * 2) {
+        score -= 0.3; details.push({ factor: '存款结构', value: hhRatio, signal: 'negative', desc: `住户存款占比${hhRatio}%、企业存款仅${entRatio}%，预防性储蓄高、企业活化弱` })
+      } else if (entRatio > hhRatio) {
+        score += 0.3; details.push({ factor: '存款结构', value: entRatio, signal: 'positive', desc: `企业存款占比${entRatio}%超住户${hhRatio}%，经营活力回升` })
+      }
+    }
+  }
+
+  // ===== CPI 城乡分化（弱信号，仅显著背离时提示）=====
   if (cpi && cpi.citySame != null && cpi.ruralSame != null) {
     const diff = +(cpi.citySame - cpi.ruralSame).toFixed(1)
     if (Math.abs(diff) >= 1) {
@@ -1112,8 +1637,8 @@ function scoreMacroFactors(cpi, pmi, m2, gdp, sf, ppi) {
     }
   }
 
-  // Clamp to [-2, 2]
-  score = Math.max(-2, Math.min(2, +score.toFixed(1)))
+  // Clamp to [-3, 3]
+  score = Math.max(-3, Math.min(3, +score.toFixed(1)))
 
   return { score, details }
 }
@@ -1125,28 +1650,39 @@ async function handleMacro(ctx) {
       return
     }
 
-    const [cpi, pmi, m2, gdp, sf, ppi] = await Promise.all([
+    const [cpi, pmi, m2, gdp, sf, ppi, cpiDetail, ppiDetail, pmiDetail, sfDetail, depositDetail, gdpDetail] = await Promise.all([
       fetchCPI().catch(e => { console.warn('CPI fetch failed:', e.message); return null }),
       fetchPMI().catch(e => { console.warn('PMI fetch failed:', e.message); return null }),
       fetchM2().catch(e => { console.warn('M2 fetch failed:', e.message); return null }),
       fetchGDP().catch(e => { console.warn('GDP fetch failed:', e.message); return null }),
       fetchSocialFinancing().catch(e => { console.warn('SocialFinancing fetch failed:', e.message); return null }),
       fetchPPI().catch(e => { console.warn('PPI fetch failed:', e.message); return null }),
+      fetchCPIDetail().catch(e => { console.warn('CPI detail fetch failed:', e.message); return null }),
+      fetchPPIDetail().catch(e => { console.warn('PPI detail fetch failed:', e.message); return null }),
+      fetchPMIDetail().catch(e => { console.warn('PMI detail fetch failed:', e.message); return null }),
+      fetchSfDetail().catch(e => { console.warn('SF detail fetch failed:', e.message); return null }),
+      fetchDepositDetail().catch(e => { console.warn('Deposit detail fetch failed:', e.message); return null }),
+      fetchGdpDetail().catch(e => { console.warn('GDP detail fetch failed:', e.message); return null }),
     ])
 
-    const scored = scoreMacroFactors(cpi, pmi, m2, gdp, sf, ppi)
+    // 评分时传入带 detail 的完整对象，使结构评分可用
+    const m2WithDetail = depositDetail ? { ...m2, detail: depositDetail } : m2
+    const sfWithDetail = sfDetail ? { ...sf, detail: sfDetail } : sf
+    const scored = scoreMacroFactors(cpi, pmi, m2WithDetail, gdp, sfWithDetail, ppi)
 
     const responseData = {
       timestamp: new Date().toISOString(),
-      cpi,
-      pmi,
-      m2,
-      gdp,
+      cpi: cpiDetail ? { ...cpi, detail: cpiDetail } : cpi,
+      pmi: pmiDetail ? { ...pmi, detail: pmiDetail } : pmi,
+      m2: depositDetail ? { ...m2, detail: depositDetail } : m2,
+      gdp: gdpDetail ? { ...gdp, detail: gdpDetail } : gdp,
       // 成分组成：附 PPI 平减后的实际增速（与 scoreMacroFactors 同公式），供前端展示
-      sf: ppi?.current != null && sf?.stockYoyGrowth != null
+      sf: sfDetail ? { ...(ppi?.current != null && sf?.stockYoyGrowth != null
         ? { ...sf, realStockYoyGrowth: +(sf.stockYoyGrowth - ppi.current).toFixed(1) }
-        : sf,
-      ppi,
+        : sf), detail: sfDetail } : (ppi?.current != null && sf?.stockYoyGrowth != null
+        ? { ...sf, realStockYoyGrowth: +(sf.stockYoyGrowth - ppi.current).toFixed(1) }
+        : sf),
+      ppi: ppiDetail ? { ...ppi, detail: ppiDetail } : ppi,
       macroScore: scored.score,
       macroDetails: scored.details
     }

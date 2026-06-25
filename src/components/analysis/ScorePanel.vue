@@ -147,8 +147,8 @@ const rankLabel = computed(() => {
 
 const DIM_META = {
   technical: { label: '技术面', color: '#0071e3' },
-  fundamental: { label: '基本面', color: '#30d158' },
   capital: { label: '资金面', color: '#ffd60a' },
+  fundamental: { label: '基本面', color: '#30d158' },
   risk: { label: '风险面', color: '#ff6b6b' },
 }
 

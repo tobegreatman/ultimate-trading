@@ -45,6 +45,15 @@
           <span class="nav-link-label">{{ item.label }}</span>
         </router-link>
       </div>
+
+      <div class="navbar-user">
+        <span class="user-avatar">{{ userInitial }}</span>
+        <span class="user-name">{{ auth.user?.username }}</span>
+        <button class="logout-btn" @click="onLogout" title="退出登录">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span class="logout-label">退出</span>
+        </button>
+      </div>
     </div>
 
     <!-- Bottom border glow -->
@@ -54,9 +63,19 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '../stores/auth.js'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
+const userInitial = computed(() => (auth.user?.username || '?').charAt(0).toUpperCase())
+
+function onLogout() {
+  auth.logout()
+  router.replace({ name: 'Login' })
+}
 const linksRef = ref(null)
 const linkEls = ref([])
 
@@ -402,6 +421,55 @@ watch(() => route.path, () => {
   color: var(--accent);
 }
 
+/* ─── User Section ─── */
+.navbar-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  padding-left: 16px;
+  flex-shrink: 0;
+}
+
+.user-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0071e3 0%, #2997ff 100%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(0, 113, 227, 0.25);
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.logout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.logout-btn:hover {
+  background: var(--red-dim);
+  border-color: rgba(255, 69, 58, 0.3);
+  color: var(--red);
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 768px) {
   .navbar-inner {
@@ -439,6 +507,19 @@ watch(() => route.path, () => {
   }
 
   .navbar-divider {
+    display: none;
+  }
+
+  .navbar-user {
+    padding-left: 10px;
+    gap: 8px;
+  }
+
+  .user-name {
+    display: none;
+  }
+
+  .logout-label {
     display: none;
   }
 }

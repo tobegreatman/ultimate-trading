@@ -98,6 +98,10 @@ input, select, textarea {
   min-height: 100vh;
 }
 
+.main-content--bare {
+  padding-top: 0;
+}
+
 .page {
   padding: 24px;
   max-width: 1460px;
