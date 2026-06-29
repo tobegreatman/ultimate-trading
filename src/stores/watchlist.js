@@ -6,7 +6,7 @@ import { REFRESH_INTERVAL } from '../utils/constants.js'
 const STORAGE_KEY = 'watchlist'
 
 export const useWatchlistStore = defineStore('watchlist', () => {
-  const stocks = ref(loadJson(STORAGE_KEY, []).map(s => ({ pinned: false, ...s })))
+  const stocks = ref(loadJson(STORAGE_KEY, []).map(s => ({ pinned: false, strategy: null, ...s })))
   const quotes = ref({})
   const klineCache = ref({})
   let refreshTimer = null
@@ -18,9 +18,17 @@ export const useWatchlistStore = defineStore('watchlist', () => {
 
   const codes = computed(() => stocks.value.map(s => s.code))
 
-  function addStock(code, name) {
-    if (stocks.value.find(s => s.code === code)) return
-    stocks.value.push({ code, name, addedAt: Date.now(), pinned: false })
+  function addStock(code, name, strategy = null) {
+    const existing = stocks.value.find(s => s.code === code)
+    if (existing) {
+      // 已存在则更新策略（若提供了更具体的 strategy）
+      if (strategy && !existing.strategy) {
+        existing.strategy = strategy
+        save()
+      }
+      return
+    }
+    stocks.value.push({ code, name, addedAt: Date.now(), pinned: false, strategy })
     save()
   }
 

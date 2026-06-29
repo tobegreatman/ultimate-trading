@@ -4,7 +4,7 @@
  * 管理个股分析的所有数据加载（K线、基本面、资金面）和综合评分计算。
  * 两阶段加载策略：首屏（K线+基本面）→ 后台（资金面6个API）。
  */
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useStockAnalysisStore } from '../stores/stockAnalysis.js'
 import { useMarketAnalysisStore } from '../stores/marketAnalysis.js'
 import { calcAllIndicators } from '../utils/indicators.js'
@@ -15,6 +15,18 @@ import { calcRiskScoreItems } from '../utils/riskMetrics.js'
 export function useStockData(selectedCode, investStyle) {
   const analysisStore = useStockAnalysisStore()
   const marketAnalysisStore = useMarketAnalysisStore()
+
+  // 确保 PE/PB 利率调节所需的市场上下文（10Y国债收益率）可用
+  // marketAnalysis.valuation 仅由 MarketAnalysis/Dashboard 视图触发填充，
+  // 若用户直接进入 StockAnalysis 页面，valuation 为 null 会导致
+  // bondYield10y 始终为 null → rateSuffix 为空 + adjustThresholdByRate 退化为静态阈值
+  // 策略：同步从 localStorage 恢复缓存（有则首次评分即生效），后台异步刷新保证最新
+  if (!marketAnalysisStore.valuation) {
+    marketAnalysisStore.loadFromCache()
+    if (!marketAnalysisStore.valuation) {
+      marketAnalysisStore.fetchValuation()
+    }
+  }
 
   // ==================== 数据 ====================
   const klines = ref([])
@@ -117,18 +129,18 @@ export function useStockData(selectedCode, investStyle) {
 
     let riskItems = null
     const kl = klines.value
-    if (kl.length >= 20) {
-      const benchCloses = benchmarkKlines.value?.map(k => k.close) || null
-      // 传完整K线对象数组（含 amount/turnover）+ fundamental（含24季度历史）+ pledgeRatio + goodwillRatio，使风险面可计算流动性/财务健康度/股权质押/商誉
-      const pledgeRatio = pledgeData.value?.latest?.pledgeRatio ?? null
-      const goodwillRatio = goodwillData.value?.latest?.goodwillRatio ?? null
-      const riskResult = calcRiskScoreItems(kl, benchCloses, investStyle.value, fund, pledgeRatio, goodwillRatio)
-      riskItems = riskResult.items
-    }
-
-    // 构造市场上下文：10年期国债收益率用于PE/PB利率调节
+    // 构造市场上下文：10年期国债收益率用于 PE/PB 利率调节 + Sharpe 无风险利率（口径统一）
     const marketCtx = {
       bondYield10y: marketAnalysisStore.valuation?.bondYield10y ?? null
+    }
+
+    if (kl.length >= 20) {
+      const benchCloses = benchmarkKlines.value?.map(k => k.close) || null
+      // 传完整K线对象数组（含 amount/turnover）+ fundamental（含24季度历史）+ pledgeRatio + goodwillRatio + marketCtx，使风险面可计算流动性/财务健康度/股权质押/商誉
+      const pledgeRatio = pledgeData.value?.latest?.pledgeRatio ?? null
+      const goodwillRatio = goodwillData.value?.latest?.goodwillRatio ?? null
+      const riskResult = calcRiskScoreItems(kl, benchCloses, investStyle.value, fund, pledgeRatio, goodwillRatio, marketCtx)
+      riskItems = riskResult.items
     }
 
     scoreResult.value = calculateScore(ts, fund, cap, industry, investStyle.value, riskItems, marketCtx)
@@ -409,9 +421,21 @@ export function useStockData(selectedCode, investStyle) {
     }, 3 * 60 * 1000)
   }
 
+  // 监听 valuation 异步到达：若首次评分时 bondYield10y 尚未就绪，
+  // 待 fetchValuation 完成后自动重算一次，使 PE/PB 利率调节与国债后缀生效
+  const stopValuationWatch = watch(
+    () => marketAnalysisStore.valuation,
+    (val) => {
+      if (val?.bondYield10y != null && fundamental.value && klines.value.length >= 20) {
+        updateScore(true)  // skipAI=true，避免触发 AI 重算
+      }
+    }
+  )
+
   function cleanup() {
     clearTimeout(stockChangeTimer)
     clearInterval(refreshTimer)
+    stopValuationWatch()
     if (abortCtrl) { abortCtrl.abort(); abortCtrl = null }
   }
 

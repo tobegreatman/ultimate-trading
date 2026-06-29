@@ -179,6 +179,12 @@
             <div v-else class="chart-loading">暂无数据</div>
           </div>
 
+          <!-- Strategy badge -->
+          <div v-if="selectedStockStrategy" class="strategy-badge-info">
+            <span class="badge-label">推荐策略</span>
+            <span class="badge-value">{{ selectedStockStrategyName }}</span>
+          </div>
+
           <!-- Stats grid -->
           <div class="stats-grid">
             <div v-for="stat in statsItems" :key="stat.label" class="stat-item" :class="{ 'stat-item--wide': stat.wide }">
@@ -189,7 +195,12 @@
 
           <!-- Actions -->
           <div class="detail-actions">
-            <router-link :to="`/position?code=${selectedCode}`" class="btn btn-primary">
+            <router-link
+              :to="selectedStockStrategy
+                ? `/position?code=${selectedCode}&name=${encodeURIComponent(selectedStockName)}&strategy=${selectedStockStrategy}`
+                : `/position?code=${selectedCode}&name=${encodeURIComponent(selectedStockName)}`"
+              class="btn btn-primary"
+            >
               计算仓位
             </router-link>
             <button class="btn btn-danger" @click="removeSelected">移除</button>
@@ -219,6 +230,22 @@ const searchResults = ref([])
 const selectedCode = ref(null)
 const activePeriod = ref('1d')
 let searchTimer = null
+
+// 当前选中股票的策略徽章（来自加入股票池时携带）
+const selectedStockStrategy = computed(() => {
+  if (!selectedCode.value) return null
+  const s = watchlistStore.stocks.find(s => s.code === selectedCode.value)
+  return s?.strategy || null
+})
+const selectedStockName = computed(() => {
+  if (!selectedCode.value) return ''
+  const s = watchlistStore.stocks.find(s => s.code === selectedCode.value)
+  return s?.name || ''
+})
+const selectedStockStrategyName = computed(() => {
+  const map = { trend: '趋势突破', pullback: '回调买入', bottom: '底部右侧确认' }
+  return map[selectedStockStrategy.value] || ''
+})
 
 // Batch mode state
 const batchMode = ref(false)
@@ -991,6 +1018,25 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   gap: 6px;
+}
+
+.strategy-badge-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: var(--accent-dim);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.strategy-badge-info .badge-label {
+  color: var(--text-muted);
+}
+.strategy-badge-info .badge-value {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .stat-item {

@@ -242,7 +242,10 @@ const resonance = computed(() => getCapitalResonance(props.capitalFlow))
 // 板块层摘要（个股所属行业的主力资金）
 const sectorLayer = computed(() => {
   const sec = props.sectorCapital?.available ? props.sectorCapital.sector : null
-  return sec ? { name: sec.name, pct: sec.mainNetPct, inflow: sec.mainNetInflow, main5d: sec.main5d, main10d: sec.main10d } : null
+  // 仅当 mainNetPct 为有效数值时才返回，避免 null.toFixed() 报错
+  return sec && sec.mainNetPct != null
+    ? { name: sec.name, pct: sec.mainNetPct, inflow: sec.mainNetInflow, main5d: sec.main5d, main10d: sec.main10d }
+    : null
 })
 // 个股层主力净占比（与板块同口径 mainNetPct）
 const stockLayer = computed(() => {
@@ -643,6 +646,7 @@ onMounted(() => nextTick(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 6px 12px;
 }
 
 .section {

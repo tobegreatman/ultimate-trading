@@ -305,6 +305,7 @@ onDeactivated(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 6px 12px;
 }
 
 .period-bar {

@@ -413,6 +413,7 @@ onDeactivated(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 6px 12px;
 }
 
 .no-data {

@@ -80,10 +80,30 @@ function buildPrompt(body) {
 
 ## 当前趋势阶段
 - 趋势状态: ${t.stage}（${t.maAlign ? '均线多头排列' : t.maDeadCross ? '均线空头排列' : '均线交织'}）
-- 价格偏离20日线: ${t.deviation20}%
-${t.deviation60 != null ? `- 价格偏离60日线: ${t.deviation60}%` : ''}
-- MACD方向: ${t.macdDirection}
-- 价格位置: ${t.aboveMa5 ? '站上5日线' : '跌破5日线'}，${t.aboveMa20 ? '站上20日线' : '跌破20日线'}`
+- 最新价: ${priceAction?.latestClose ?? '?'}元`
+    if (t.ma5Price != null) prompt += `\n- MA5: ${t.ma5Price}元（${t.aboveMa5 ? '价在线上' : '价在线下'}）`
+    if (t.ma20Price != null) prompt += `\n- MA20: ${t.ma20Price}元（${t.aboveMa20 ? '价在线上' : '价在线下'}，偏离${t.deviation20}%）`
+    if (t.ma60Price != null) prompt += `\n- MA60: ${t.ma60Price}元（${t.aboveMa60 ? '价在线上' : '价在线下'}${t.deviation60 != null ? `，偏离${t.deviation60}%` : ''}）`
+    if (t.atrValue != null) prompt += `\n- ATR(14): ${t.atrValue}元（日均波动${t.atrPct}%）`
+    prompt += `\n- MACD方向: ${t.macdDirection}`
+
+    // 候选价位区：AI 只能从这些值中选择引用，禁止自行计算
+    if (t.candidates) {
+      const c = t.candidates
+      prompt += `
+
+## 候选价位参考（重要：所有价位必须从下表引用，禁止自行计算或编造）
+| 用途 | 价位 | 说明 |
+|------|------|------|
+| 当前价 | ${c.latestClose}元 | 基准 |
+| MA5 | ${c.ma5}元 | 短期均线 |
+| MA20 | ${c.ma20}元 | 中期均线 |${c.ma60 != null ? `\n| MA60 | ${c.ma60}元 | 长期均线 |` : ''}
+| 止损1×ATR | ${c.stop1atr}元 | 距现价-${t.atrPct}%，最紧 |
+| 止损1.5×ATR | ${c.stop15atr}元 | 距现价-${(t.atrPct * 1.5).toFixed(1)}% |
+| 止损2×ATR | ${c.stop2atr}元 | 距现价-${(t.atrPct * 2).toFixed(1)}%，最宽 |
+| 目标2×ATR | ${c.tgt2atr}元 | 距现价+${(t.atrPct * 2).toFixed(1)}% |
+| 目标3×ATR | ${c.tgt3atr}元 | 距现价+${(t.atrPct * 3).toFixed(1)}% |`
+    }
   }
 
   if (fundSummary) {
@@ -134,25 +154,57 @@ ${t.deviation60 != null ? `- 价格偏离60日线: ${t.deviation60}%` : ''}
 ${previousAdvice.slice(0, 500)}`
   }
 
+  const latestClose = priceAction?.latestClose
+  const candidates = trendContext?.candidates
+  const hasCandidates = !!candidates
+
   prompt += `
 
-请按以下结构输出综合判断（不超过400字）：
+---
 
-先用一句话给出明确结论。结论必须客观反映当前数据，不要默认偏空：
-- 如果数据偏多（评分较高、趋势向上、资金流入），就说"趋势偏多，可关注"或"多头格局中"
-- 如果数据偏空（评分较低、趋势向下、资金流出），就说"偏弱，建议回避"
-- 如果多空交织，就说"震荡格局，等待方向明确"
+# 输出指令
 
-然后列出 3-4 个核心要点，每个要点格式为"**标题**：分析内容"：
-- 标题要具体到这只股票的核心矛盾
-- 好标题示例："**均线多头支撑强**"、"**主力连续3日净流入**"、"**PE处于行业低位**"、"**短期涨幅过大存回调风险**"
-- 分析内容必须引用具体数字佐证
-- 要点按重要性排序，多空要点都要有（如果有的话）
+## 绝对约束（违反即作废，必须严格遵守）
+1. **价位引用规则**：${hasCandidates ? '所有提到价位必须从上方"候选价位参考"表中引用，**禁止自行计算或编造任何新价位**。' : '所有价位必须基于当前价计算，禁止编造。'}
+2. **方向规则**：
+   - "突破XX元"的XX 必须 > 当前价${latestClose ?? '?'}元
+   - "跌破XX元"的XX 必须 < 当前价${latestClose ?? '?'}元
+   - 禁止方向倒挂（如"突破一个比当前价低的价位"）
+3. **止损位规则**：${candidates ? `只能从 止损1×ATR(${candidates.stop1atr}元) / 止损1.5×ATR(${candidates.stop15atr}元) / 止损2×ATR(${candidates.stop2atr}元) 中选择，**禁止自创止损价**。` : '止损位必须 ≥ ATR日均波动幅度。'}
+4. **字数规则**：总输出 350-450字，每个章节有独立字数限制。
 
-最后给出可执行的操作建议，必须包含：
-1. **入场/加仓条件**：明确的触发信号（如"突破XX元且放量"、"回调至XX元附近企稳"、"MACD金叉确认"），不要只说"关注"或"观望"
-2. **止损/减仓条件**：明确的退出信号（如"跌破XX元"、"MACD死叉"、"放量跌破20日线"）
-3. 如果上次建议了回调价位且当前已到该价位附近，必须重新评估是否满足入场条件，而不是简单重复"继续观望"`
+## 输出结构（按章节生成，严格遵守字数限制）
+
+### 一、结论（30-50字）
+一句话明确结论 + 趋势方向。客观反映数据，不要默认偏空：
+- 偏多 → "趋势偏多，可关注"
+- 偏空 → "偏弱，暂时回避"
+- 多空交织 → "震荡格局，等待方向明确"
+
+### 二、核心要点（120-180字，3-4个）
+每个要点**必须单独成行**（用换行符分隔，禁止挤在一行）：
+**标题1**：分析内容
+**标题2**：分析内容
+**标题3**：分析内容
+标题具体到核心矛盾（如"**均线空头压制**"）。分析内容必须引用具体数字。
+
+### 三、操作建议（120-180字）
+每个子项**必须单独成行**（用换行符分隔）。**根据结论类型选择对应模板，不要套用同一套：**
+
+▎结论="偏弱/回避"→ 输出【观望触发条件】+【风险提示】
+**观望触发条件**：未来什么信号出现才值得重新关注（这是"等待"条件，不是现在入场）
+**风险提示**：若已套牢持仓，给出减仓/止损信号
+
+▎结论="偏多/可关注"→ 输出【入场条件】+【止损条件】
+**入场条件**：明确触发信号
+**止损条件**：${candidates ? `从候选价位表中选择一个止损价` : '明确退出信号'}
+
+▎结论="震荡"→ 输出【向上突破信号】+【向下破位信号】
+**向上突破信号**：xxx
+**向下破位信号**：xxx
+
+### 四、上次建议复查（20-50字，若适用）
+如果上次建议了价位且当前已到该价位附近（±2%内），必须重新评估，不能简单重复"继续观望"。`
 
   return prompt
 }
@@ -170,20 +222,34 @@ async function handleAIJudge(ctx) {
     return
   }
 
-  // 缓存检查（Key 包含评分 + 关键信号 + 模型，评分变化或切换模型时刷新）
-  const keySignals = (body.techSummary?.keySignals || '').slice(0, 60)
+  // 缓存检查（Key 基于数值签名，避免 keySignals 字符串顺序不稳定问题）
   const model = MODEL_MAP[body.model] ? body.model : DEFAULT_MODEL
-  const cacheKey = `${body.code}_${body.scoreSummary?.total || 0}_${keySignals}_${model}`
+  const sigHash = (body.techSummary?.keySignals || '')
+    .split('；').filter(Boolean).sort().join('|').slice(0, 80)
+  const cacheKey = `${body.code}_${body.scoreSummary?.total || 0}_${sigHash}_${model}`
   const cached = aiCache.get(cacheKey)
+
+  // 安全写入：连接关闭后 res.write 会抛 ERR_STREAM_WRITE_AFTER_END / EPIPE，必须防护
+  let closed = false
+  ctx.req.on('close', () => { closed = true })
+  const safeWrite = (data) => {
+    if (closed || ctx.res.writableEnded) return
+    try { ctx.res.write(data) } catch { closed = true }
+  }
+  const safeEnd = () => {
+    if (closed || ctx.res.writableEnded) return
+    try { ctx.res.end() } catch { /* 连接已断 */ }
+  }
+
   if (cached && Date.now() - cached.ts < AI_CACHE_TTL) {
     ctx.status = 200
     ctx.set('Content-Type', 'text/event-stream')
     ctx.set('Cache-Control', 'no-cache')
     ctx.set('Connection', 'keep-alive')
     ctx.respond = false
-    ctx.res.write(`data: ${JSON.stringify({ type: 'text', content: cached.text })}\n\n`)
-    ctx.res.write('data: [DONE]\n\n')
-    ctx.res.end()
+    safeWrite(`data: ${JSON.stringify({ type: 'text', content: cached.text })}\n\n`)
+    safeWrite('data: [DONE]\n\n')
+    safeEnd()
     return
   }
 
@@ -203,23 +269,42 @@ async function handleAIJudge(ctx) {
       model: model,
       messages: [{ role: 'user', content: prompt }],
       stream: true,
-      max_tokens: 8192,
+      max_tokens: 16384,
+      // 尝试关闭 thinking 模式，避免推理过程耗尽 token 导致无最终输出
+      thinking: { type: 'disabled' },
     })
 
     ctx.req.on('close', () => {
       stream.controller?.abort()
     })
 
+    let chunkCount = 0
+    let hasReasoning = false
+    let reasoningText = ''
     for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta
-      // GLM-5.1 推理模型：reasoning_content 是思考过程，content 是最终回复
-      // 只取 content，过滤掉 reasoning_content
+      if (closed) break
+      chunkCount++
+      const choice = chunk.choices?.[0]
+      const delta = choice?.delta
+      // GLM 推理模型：reasoning_content 是思考过程，content 是最终回复
+      const reasoning = delta?.reasoning_content
+      if (reasoning) {
+        hasReasoning = true
+        reasoningText += reasoning
+      }
       const content = delta?.content
       if (content) {
         fullText += content
-        ctx.res.write(`data: ${JSON.stringify({ type: 'text', content })}\n\n`)
+        safeWrite(`data: ${JSON.stringify({ type: 'text', content })}\n\n`)
       }
     }
+    // Fallback：如果 content 为空但 reasoning 有内容，说明 thinking 耗尽了 token
+    // 此时用 reasoning 内容作为输出（虽然包含思考过程，但比无输出好）
+    if (!fullText && reasoningText) {
+      fullText = reasoningText
+      safeWrite(`data: ${JSON.stringify({ type: 'text', content: reasoningText })}\n\n`)
+    }
+    console.log(`[ai-judge] code=${body.code} model=${model} chunks=${chunkCount} reasoning=${hasReasoning} reasoningLen=${reasoningText.length} contentLen=${fullText.length}`)
 
     // 缓存完整结果 + LRU 淘汰
     if (fullText) {
@@ -227,12 +312,12 @@ async function handleAIJudge(ctx) {
       evictAICache()
     }
 
-    ctx.res.write('data: [DONE]\n\n')
-    ctx.res.end()
+    safeWrite('data: [DONE]\n\n')
+    safeEnd()
   } catch (err) {
     console.error('AI judge error:', err.message)
-    ctx.res.write(`data: ${JSON.stringify({ type: 'error', content: 'AI 分析暂时不可用: ' + err.message })}\n\n`)
-    ctx.res.end()
+    safeWrite(`data: ${JSON.stringify({ type: 'error', content: 'AI 分析暂时不可用: ' + err.message })}\n\n`)
+    safeEnd()
   }
 }
 

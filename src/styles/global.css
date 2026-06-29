@@ -1,8 +1,8 @@
 :root {
   --bg-primary: #0f172a;
-  --bg-surface: #1e293b;
-  --bg-surface-alt: #334155;
-  --bg-hover: #3b4a63;
+  --bg-surface: rgba(30, 41, 59, 0.38);
+  --bg-surface-alt: rgba(51, 65, 85, 0.33);
+  --bg-hover: rgba(59, 74, 99, 0.45);
   --text-primary: #e2e8f0;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
@@ -31,6 +31,74 @@
   --font-mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
 }
 
+/* ─── Starship Theme: 更激进现代化的科幻深空风格 ─── */
+/* 通过 <html data-theme="starship"> 激活，覆盖默认 :root 变量 */
+[data-theme="starship"] {
+  --bg-primary: #060814;
+  --bg-surface: rgba(13, 16, 36, 0.38);
+  --bg-surface-alt: rgba(22, 27, 58, 0.33);
+  --bg-hover: rgba(31, 39, 82, 0.45);
+  --text-primary: #eaf0ff;
+  --text-secondary: #9fb0e0;
+  --text-muted: #5d6a9c;
+  --accent: #22d3ee;
+  --accent-hover: #5ee9f7;
+  --accent-dim: rgba(34, 211, 238, 0.12);
+  --glass-bg: rgba(34, 211, 238, 0.06);
+  --glass-border: rgba(120, 200, 255, 0.18);
+  --glass-glow: 0 0 18px rgba(34, 211, 238, 0.18);
+  --green: #3df29f;
+  --green-dim: rgba(61, 242, 159, 0.12);
+  --red: #ff3d6e;
+  --red-dim: rgba(255, 61, 110, 0.12);
+  --yellow: #ffd23f;
+  --yellow-dim: rgba(255, 210, 63, 0.12);
+  --border: rgba(120, 180, 255, 0.12);
+  --border-light: rgba(120, 180, 255, 0.06);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(34, 211, 238, 0.06);
+}
+
+/* 星舰氛围：青/紫光斑散落分布，与暗面交替，避免局部集中亮面 */
+[data-theme="starship"] body {
+  background-color: #0b1024;
+  background-image:
+    /* —— 散落光斑层：青/紫交替铺满整页，形成明暗节奏 —— */
+    radial-gradient(ellipse 520px 380px at 12% 8%, rgba(34, 211, 238, 0.22), transparent 60%),
+    radial-gradient(ellipse 560px 400px at 38% 22%, rgba(167, 139, 250, 0.20), transparent 62%),
+    radial-gradient(ellipse 500px 360px at 66% 10%, rgba(34, 211, 238, 0.20), transparent 60%),
+    radial-gradient(ellipse 540px 380px at 88% 26%, rgba(167, 139, 250, 0.21), transparent 62%),
+    radial-gradient(ellipse 520px 380px at 22% 48%, rgba(167, 139, 250, 0.18), transparent 62%),
+    radial-gradient(ellipse 500px 360px at 52% 58%, rgba(34, 211, 238, 0.18), transparent 60%),
+    radial-gradient(ellipse 540px 380px at 80% 50%, rgba(167, 139, 250, 0.19), transparent 62%),
+    radial-gradient(ellipse 520px 380px at 8% 74%, rgba(34, 211, 238, 0.18), transparent 60%),
+    radial-gradient(ellipse 560px 400px at 42% 86%, rgba(167, 139, 250, 0.19), transparent 62%),
+    radial-gradient(ellipse 500px 360px at 72% 92%, rgba(34, 211, 238, 0.18), transparent 60%),
+    radial-gradient(ellipse 520px 380px at 94% 78%, rgba(167, 139, 250, 0.18), transparent 62%),
+    /* 科技网格：极淡青色经纬线，统一全局质感 */
+    linear-gradient(rgba(120, 180, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 180, 255, 0.035) 1px, transparent 1px),
+    /* 四角暗角：仅收边 */
+    radial-gradient(ellipse at 50% 45%, transparent 75%, rgba(0, 0, 0, 0.28) 100%);
+  background-size:
+    cover, cover, cover, cover, cover, cover, cover, cover, cover, cover, cover,
+    46px 46px, 46px 46px, cover;
+  background-attachment: fixed;
+}
+
+[data-theme="starship"] ::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.2);
+}
+
+[data-theme="starship"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 211, 238, 0.35);
+}
+
+[data-theme="starship"] ::selection {
+  background: rgba(34, 211, 238, 0.25);
+  color: #ffffff;
+}
+
 *,
 *::before,
 *::after {
@@ -47,7 +115,24 @@ html {
 
 body {
   font-family: var(--font-sans);
-  background: var(--bg-primary);
+  background-color: var(--bg-primary);
+  background-image:
+    /* 默认主题散落眩光：蓝色调，与 starship 同布局/数量/尺寸，仅色调不同 */
+    radial-gradient(ellipse 520px 380px at 12% 8%, rgba(91, 156, 245, 0.22), transparent 60%),
+    radial-gradient(ellipse 560px 400px at 38% 22%, rgba(130, 180, 255, 0.20), transparent 62%),
+    radial-gradient(ellipse 500px 360px at 66% 10%, rgba(91, 156, 245, 0.20), transparent 60%),
+    radial-gradient(ellipse 540px 380px at 88% 26%, rgba(130, 180, 255, 0.21), transparent 62%),
+    radial-gradient(ellipse 520px 380px at 22% 48%, rgba(130, 180, 255, 0.18), transparent 62%),
+    radial-gradient(ellipse 500px 360px at 52% 58%, rgba(91, 156, 245, 0.18), transparent 60%),
+    radial-gradient(ellipse 540px 380px at 80% 50%, rgba(130, 180, 255, 0.19), transparent 62%),
+    radial-gradient(ellipse 520px 380px at 8% 74%, rgba(91, 156, 245, 0.18), transparent 60%),
+    radial-gradient(ellipse 560px 400px at 42% 86%, rgba(130, 180, 255, 0.19), transparent 62%),
+    radial-gradient(ellipse 500px 360px at 72% 92%, rgba(91, 156, 245, 0.18), transparent 60%),
+    radial-gradient(ellipse 520px 380px at 94% 78%, rgba(130, 180, 255, 0.18), transparent 62%),
+    /* 四角暗角收边 */
+    radial-gradient(ellipse at 50% 45%, transparent 75%, rgba(0, 0, 0, 0.28) 100%);
+  background-size: cover, cover, cover, cover, cover, cover, cover, cover, cover, cover, cover, cover;
+  background-attachment: fixed;
   color: var(--text-primary);
   line-height: 1.6;
   min-height: 100vh;
@@ -116,9 +201,22 @@ input, select, textarea {
 
 .card {
   background: var(--bg-surface);
+  backdrop-filter: blur(16px) saturate(1.5);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
   border-radius: var(--radius-md);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   padding: 20px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* —— 全局容器毛玻璃：覆盖各视图自定义面板类(*-card / *-panel) —— */
+/* :not([class*="__"]) 排除 BEM 子元素，避免文字被线框包裹 */
+[class*="-card"]:not([class*="__"]),
+[class*="-panel"]:not([class*="__"]) {
+  backdrop-filter: blur(16px) saturate(1.5);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .btn {
@@ -281,4 +379,180 @@ th {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* ════════════════════════════════════════════════════════════
+   Starship 主题：覆盖组件内硬编码的 Apple Blue 高频可见元素
+   使用 html[data-theme="starship"] 前缀提升优先级，覆盖 scoped 样式
+   ════════════════════════════════════════════════════════════ */
+
+/* —— NavBar：浮动玻璃岛，脱离顶边，圆角 + 环形辉光 —— */
+html[data-theme="starship"] .navbar {
+  top: 14px;
+  left: 16px;
+  right: 16px;
+  height: 60px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(13, 16, 36, 0.72) 0%,
+    rgba(6, 8, 20, 0.68) 100%
+  );
+  backdrop-filter: blur(28px) saturate(1.8);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(34, 211, 238, 0.08),
+    0 0 32px rgba(34, 211, 238, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* 浮动岛下方留出呼吸空间 */
+html[data-theme="starship"] .main-content {
+  padding-top: 68px;
+}
+
+/* Starship 输入控件保持较高不透明度，确保文字可读 */
+html[data-theme="starship"] input,
+html[data-theme="starship"] select,
+html[data-theme="starship"] textarea {
+  background: rgba(13, 16, 36, 0.75);
+}
+
+/* 主按钮：青→紫渐变 + 辉光，大屏点睛 */
+html[data-theme="starship"] .btn-primary {
+  background: linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%);
+  box-shadow: 0 4px 16px rgba(34, 211, 238, 0.25);
+}
+
+html[data-theme="starship"] .btn-primary:hover {
+  box-shadow: 0 6px 24px rgba(34, 211, 238, 0.4);
+}
+
+/* 输入框聚焦：青色光环 */
+html[data-theme="starship"] input:focus,
+html[data-theme="starship"] select:focus,
+html[data-theme="starship"] textarea:focus {
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.16);
+}
+
+/* —— 移动端：缩小浮动边距 —— */
+@media (max-width: 768px) {
+  html[data-theme="starship"] .navbar {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    height: 56px;
+    border-radius: 14px;
+  }
+  html[data-theme="starship"] .main-content {
+    padding-top: 76px;
+  }
+}
+
+html[data-theme="starship"] .navbar-border-glow {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(34, 211, 238, 0.35) 30%,
+    rgba(167, 139, 250, 0.3) 50%,
+    rgba(34, 211, 238, 0.35) 70%,
+    transparent
+  );
+}
+
+html[data-theme="starship"] .nav-pill {
+  background: rgba(34, 211, 238, 0.22);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.2);
+}
+
+html[data-theme="starship"] .navbar-links:hover .nav-pill {
+  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(34, 211, 238, 0.18);
+}
+
+html[data-theme="starship"] .logo-icon {
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+}
+
+html[data-theme="starship"] .navbar-logo:hover .logo-icon {
+  background: rgba(34, 211, 238, 0.18);
+  border-color: rgba(34, 211, 238, 0.4);
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.25);
+}
+
+html[data-theme="starship"] .logo-dot {
+  background: #22d3ee;
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.7);
+}
+
+html[data-theme="starship"] .user-avatar {
+  background: linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.35);
+}
+
+/* Logo SVG 渐变：青 → 紫 */
+html[data-theme="starship"] #logoGrad stop:nth-child(1) {
+  stop-color: #22d3ee;
+}
+html[data-theme="starship"] #logoGrad stop:nth-child(2) {
+  stop-color: #a78bfa;
+}
+
+/* —— Login —— */
+html[data-theme="starship"] .login-page {
+  background: radial-gradient(
+    ellipse at top,
+    rgba(34, 211, 238, 0.1) 0%,
+    transparent 50%
+  ), var(--bg-primary);
+}
+
+html[data-theme="starship"] .login-bg-glow {
+  background: radial-gradient(
+    circle,
+    rgba(34, 211, 238, 0.16) 0%,
+    rgba(167, 139, 250, 0.08) 40%,
+    transparent 70%
+  );
+}
+
+html[data-theme="starship"] .login-card {
+  background: linear-gradient(
+    180deg,
+    rgba(13, 16, 36, 0.92) 0%,
+    rgba(6, 8, 20, 0.94) 100%
+  );
+  border-color: rgba(34, 211, 238, 0.18);
+}
+
+html[data-theme="starship"] .login-logo {
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.22);
+}
+
+html[data-theme="starship"] .login-btn {
+  background: linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%);
+}
+
+html[data-theme="starship"] .login-btn:hover:not(:disabled) {
+  box-shadow: 0 6px 24px rgba(34, 211, 238, 0.35);
+}
+
+html[data-theme="starship"] .field-input:focus {
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.16);
+}
+
+/* Login logo SVG 渐变 */
+html[data-theme="starship"] #loginGrad stop:nth-child(1) {
+  stop-color: #22d3ee;
+}
+html[data-theme="starship"] #loginGrad stop:nth-child(2) {
+  stop-color: #a78bfa;
 }

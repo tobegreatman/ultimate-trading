@@ -47,6 +47,16 @@
       </div>
 
       <div class="navbar-user">
+        <button
+          class="theme-toggle"
+          :class="{ active: isStarship }"
+          @click="toggleTheme"
+          :title="isStarship ? '当前：Starship 主题（点击切回默认）' : '当前：默认主题（点击切换 Starship）'"
+          aria-label="切换主题"
+        >
+          <span class="theme-toggle__icon" v-html="themeIcon"></span>
+          <span class="theme-toggle__label">{{ isStarship ? 'Starship' : 'Default' }}</span>
+        </button>
         <span class="user-avatar">{{ userInitial }}</span>
         <span class="user-name">{{ auth.user?.username }}</span>
         <button class="logout-btn" @click="onLogout" title="退出登录">
@@ -65,10 +75,25 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
+import { useThemeStore } from '../stores/theme.js'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const theme = useThemeStore()
+
+const isStarship = computed(() => theme.isStarship)
+
+function toggleTheme() {
+  theme.toggle()
+}
+
+// 主题图标：Starship 用火箭，默认用星形
+const themeIcon = computed(() =>
+  isStarship.value
+    ? `<svg ${SVG_ATTRS}><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>`
+    : `<svg ${SVG_ATTRS}><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>`
+)
 
 const userInitial = computed(() => (auth.user?.username || '?').charAt(0).toUpperCase())
 
@@ -470,6 +495,52 @@ watch(() => route.path, () => {
   color: var(--red);
 }
 
+/* ─── Theme Toggle ─── */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.theme-toggle__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  line-height: 1;
+}
+
+.theme-toggle__icon :deep(svg) {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.theme-toggle:hover {
+  color: var(--text-secondary);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.theme-toggle:active {
+  transform: scale(0.96);
+}
+
+/* Starship 激活态：青色辉光 */
+.theme-toggle.active {
+  color: var(--accent);
+  border-color: rgba(34, 211, 238, 0.4);
+  background: var(--accent-dim);
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.18);
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 768px) {
   .navbar-inner {
@@ -520,6 +591,10 @@ watch(() => route.path, () => {
   }
 
   .logout-label {
+    display: none;
+  }
+
+  .theme-toggle__label {
     display: none;
   }
 }

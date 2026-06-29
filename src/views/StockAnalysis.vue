@@ -409,7 +409,35 @@ function triggerAIJudge() {
 
     const deviation20 = ((price - ma20) / ma20 * 100).toFixed(1)
     const deviation60 = ma60 ? ((price - ma60) / ma60 * 100).toFixed(1) : null
-    return { stage, deviation20, deviation60, maAlign, maDeadCross, macdDirection, aboveMa5, aboveMa20, aboveMa60 }
+    // ATR 用于波动率约束（止损位宽度参考）
+    const atrArr = ind?.atr || []
+    const atrValue = atrArr[len - 1] ?? null
+    const atrPct = atrValue && price ? +(atrValue / price * 100).toFixed(2) : null
+
+    // 预计算候选价位：AI 无需自己算数学，只能从这些值中选择/引用
+    // 目的：彻底消除"突破低于现价的价位""止损过紧"等数学错误
+    const candidates = (() => {
+      if (!price || !atrValue) return null
+      const stop1atr = +(price - atrValue).toFixed(2)       // 1×ATR 止损
+      const stop15atr = +(price - 1.5 * atrValue).toFixed(2) // 1.5×ATR 止损
+      const stop2atr = +(price - 2 * atrValue).toFixed(2)    // 2×ATR 止损
+      const tgt2atr = +(price + 2 * atrValue).toFixed(2)     // 2×ATR 目标
+      const tgt3atr = +(price + 3 * atrValue).toFixed(2)     // 3×ATR 目标
+      return {
+        stop1atr, stop15atr, stop2atr,
+        tgt2atr, tgt3atr,
+        ma5: +ma5.toFixed(2), ma20: +ma20.toFixed(2),
+        ma60: ma60 ? +ma60.toFixed(2) : null,
+        latestClose: +price.toFixed(2),
+      }
+    })()
+
+    return {
+      stage, deviation20, deviation60, maAlign, maDeadCross, macdDirection, aboveMa5, aboveMa20, aboveMa60,
+      ma5Price: +ma5.toFixed(2), ma20Price: +ma20.toFixed(2), ma60Price: ma60 ? +ma60.toFixed(2) : null,
+      atrValue: atrValue ? +atrValue.toFixed(2) : null, atrPct,
+      candidates,
+    }
   })()
 
   const payload = {
@@ -530,7 +558,7 @@ function onSearchSelect(item) {
   searchResults.value = []
   // 自动加入自选（如未添加）
   if (!watchlistStore.stocks.find(s => s.code === item.code)) {
-    watchlistStore.addStock(item.code, item.name)
+    watchlistStore.addStock(item.code, item.name, route.query.strategy || null)
     watchlistStore.fetchQuotes()
   }
   selectedCode.value = item.code
@@ -648,17 +676,26 @@ onBeforeUnmount(() => {
 .stock-select {
   padding: 5px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   background: var(--bg-surface);
+  backdrop-filter: blur(16px) saturate(1.5);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
   color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   min-width: 180px;
 }
 
+/* 原生 <option> 默认白底黑字，与深色风格不搭，强制深色 */
+.stock-select option {
+  background: #1e293b;
+  color: var(--text-primary);
+}
+
 .stock-select:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 .stock-selector {

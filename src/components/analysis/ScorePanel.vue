@@ -44,8 +44,11 @@
 
       <!-- 明细：动态维度列 -->
       <div class="details-section">
-        <h4 class="section-title">评分明细</h4>
-        <div class="details-cols">
+        <h4 class="section-title collapsible" @click="detailsCollapsed = !detailsCollapsed">
+          <span class="collapse-arrow" :class="{ collapsed: detailsCollapsed }">▾</span>
+          评分明细
+        </h4>
+        <div v-show="!detailsCollapsed" class="details-cols">
           <div v-for="dim in dimensionList" :key="dim.key" :class="['detail-col', `col-${dim.key}`]">
             <div class="col-header" :style="{ color: dim.color }">{{ dim.label }}<span v-if="dim.resonance" class="col-resonance" :class="resonanceClass(dim.resonance)">{{ dim.resonance }}</span></div>
             <div class="detail-list">
@@ -122,6 +125,9 @@ const gaugeRef = ref(null)
 const radarRef = ref(null)
 const trendRef = ref(null)
 
+// 评分明细收起/展开（默认展开）
+const detailsCollapsed = ref(false)
+
 const gaugeChart = useECharts(gaugeRef)
 const radarChart = useECharts(radarRef)
 const trendChart = useECharts(trendRef)
@@ -179,6 +185,7 @@ const renderedAIContent = computed(() => {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/###\s*(.+?)(\n|$)/g, '<div class="ai-heading">$1</div>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n/g, '<br>')
 })
@@ -305,6 +312,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  padding: 6px 12px;
 }
 
 .no-data {
@@ -356,7 +364,7 @@ onMounted(() => {
 .radar-chart {
   flex: 1;
   width: 100%;
-  height: 220px;
+  height: 200px;
 }
 
 .dimension-bars {
@@ -414,6 +422,25 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.section-title.collapsible {
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+  transition: color 0.15s;
+}
+.section-title.collapsible:hover {
+  color: var(--accent, #0071e3);
+}
+
+.collapse-arrow {
+  display: inline-block;
+  font-size: 12px;
+  transition: transform 0.2s ease;
+}
+.collapse-arrow.collapsed {
+  transform: rotate(-90deg);
 }
 
 .details-cols {
@@ -728,6 +755,17 @@ onMounted(() => {
 .ai-content :deep(strong) {
   color: #e2e8f0;
   font-weight: 700;
+}
+
+.ai-content :deep(.ai-heading) {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent, #0071e3);
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+.ai-content :deep(.ai-heading:first-child) {
+  margin-top: 0;
 }
 
 .ai-cursor {

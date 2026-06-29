@@ -148,6 +148,19 @@ function fail(msg) { return { ok: false, error: msg } }
 const app = new Koa()
 const router = new Router()
 
+// 全局错误处理：防止 bodyparser JSON 解析错误等未捕获异常导致进程崩溃
+app.on('error', (err, ctx) => {
+  // bodyparser 的 JSON 语法错误：返回 400，不打印堆栈
+  if (err?.type === 'entity.parse.failed' || err?.name === 'SyntaxError') {
+    if (ctx && !ctx.headersSent) {
+      ctx.status = 400
+      ctx.body = { ok: false, error: '请求体格式错误' }
+    }
+    return
+  }
+  console.error('Koa error:', err.message)
+})
+
 app.use(cors())
 app.use(bodyParser())
 app.use(logger())
@@ -1146,4 +1159,12 @@ if (fs.existsSync(distPath)) {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Ultimate Trading System server running on http://0.0.0.0:${PORT}`)
+})
+
+// 进程级防护：防止未捕获的 Promise rejection 或异常导致 server 崩溃
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException (server 继续运行):', err.message)
+})
+process.on('unhandledRejection', (err) => {
+  console.error('unhandledRejection (server 继续运行):', err?.message || err)
 })

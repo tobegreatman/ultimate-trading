@@ -43,11 +43,14 @@ function stdDev(arr) {
 /**
  * 计算年化 Sharpe 比率
  * @param {number[]} returns - 日收益率序列
- * @param {number} [riskFreeRate=0.015] - 年化无风险利率（默认 1.5%，约一年期定存）
+ * @param {number} [riskFreeRate] - 年化无风险利率（0~1，如 0.016 表示 1.6%）。
+ *   推荐传入 10 年期国债收益率（与 PE/PB 利率调节口径一致）；未传或无效时回退到 1.5%（约一年期定存）
  * @returns {number} 年化 Sharpe 比率，数据不足返回 null
  */
-export function calcSharpe(returns, riskFreeRate = 0.015) {
+export function calcSharpe(returns, riskFreeRate) {
   if (!returns || returns.length < 20) return null
+  // 统一利率口径：优先使用传入的 10Y 国债收益率，缺失或无效时回退到 1.5%
+  const rf = (typeof riskFreeRate === 'number' && riskFreeRate > 0 && riskFreeRate < 1) ? riskFreeRate : 0.015
 
   function sharpeFromSlice(rets) {
     const avgReturn = mean(rets)
@@ -55,7 +58,7 @@ export function calcSharpe(returns, riskFreeRate = 0.015) {
     if (vol === 0) return 0
     const annualizedReturn = avgReturn * 252
     const annualizedVol = vol * Math.sqrt(252)
-    return (annualizedReturn - riskFreeRate) / annualizedVol
+    return (annualizedReturn - rf) / annualizedVol
   }
 
   const fullSharpe = sharpeFromSlice(returns)
@@ -370,9 +373,15 @@ function calcGoodwillScore(goodwillRatio) {
  * @param {number[]|Array<{close:number,amount:number,turnover:number}>} stockClosesOrKlines
  *   个股收盘价序列（旧调用）或完整日K线对象数组（新调用，启用流动性子项）。按时间正序，最旧在前。
  * @param {number[]|null} benchCloses - 基准指数收盘价序列（同上，可为 null）
- * @returns {{ items: Array<{name:string, score:number, max:number, desc:string}>, metrics: {sharpe:number|null, mdd:number|null, mddDays:number|null, benchMdd:number|null, excessMdd:number|null, beta:number|null, avgTurnover:number|null, turnoverCv:number|null, impactPerYi:number|null} }}
+ * @param {string} [style='mid'] - 投资风格
+ * @param {Object|null} [fundamental=null] - 基本面数据
+ * @param {number|null} [pledgeRatio=null] - 股权质押率
+ * @param {number|null} [goodwillRatio=null] - 商誉占净资产比
+ * @param {Object|null} [marketCtx=null] - 市场上下文，{ bondYield10y: number }
+ *   传入 10Y 国债收益率（%）用于 Sharpe 无风险利率，与 PE/PB 利率调节口径一致
+ * @returns {{ items: Array<{name:string, score:number, max:number, desc:string}>, metrics: {sharpe:number|null, mdd:number|null, mddDays:number|null, benchMdd:null, excessMdd:number|null, beta:number|null, avgTurnover:number|null, turnoverCv:number|null, impactPerYi:number|null} }}
  */
-export function calcRiskScoreItems(stockClosesOrKlines, benchCloses, style = 'mid', fundamental = null, pledgeRatio = null, goodwillRatio = null) {
+export function calcRiskScoreItems(stockClosesOrKlines, benchCloses, style = 'mid', fundamental = null, pledgeRatio = null, goodwillRatio = null, marketCtx = null) {
   // 兼容旧调用：收盘价数组（旧，如 tmp_score 脚本）或完整K线对象数组（新，含 close/amount/turnover）
   const isObjArr = Array.isArray(stockClosesOrKlines) && stockClosesOrKlines.length > 0 && typeof stockClosesOrKlines[0] === 'object'
   const stockCloses = isObjArr ? stockClosesOrKlines.map(k => k.close) : stockClosesOrKlines
@@ -381,8 +390,9 @@ export function calcRiskScoreItems(stockClosesOrKlines, benchCloses, style = 'mi
   const items = []
   const metrics = { sharpe: null, mdd: null, mddDays: null, benchMdd: null, excessMdd: null, beta: null, avgTurnover: null, turnoverCv: null, impactPerYi: null, marginCv: null, marginMean: null, debtDelta: null, fhOcfRatio: null, pledgeRatio: null, goodwillRatio: null }
 
-  // 1. Sharpe 比率 (0-5)
-  const sharpe = calcSharpe(stockReturns)
+  // 1. Sharpe 比率 (0-5) — 无风险利率复用 10Y 国债收益率（%），与 PE/PB 利率调节口径一致
+  const bondYield10y = marketCtx?.bondYield10y
+  const sharpe = calcSharpe(stockReturns, bondYield10y != null ? bondYield10y / 100 : undefined)
   metrics.sharpe = sharpe
   if (sharpe !== null) {
     let score, desc

@@ -52,6 +52,67 @@ export function calcStopLoss(buyPrice, atr, strategy) {
 }
 
 /**
+ * 识别趋势突破的"强突破"（突破强度 > 2）
+ * 突破强度 = 突破日涨幅 / 当日ATR波动率
+ * @returns {object|null} { isStrong, breakoutDay, dayLow, dayOpen, dayClose, strength }
+ */
+export function detectStrongBreakout(klines) {
+  if (!klines || klines.length < 22) return null
+  const today = klines[klines.length - 1]
+  const prev = klines[klines.length - 2]
+  const recent20 = klines.slice(-21, -1) // 不含今天
+  const high20BeforeToday = Math.max(...recent20.map(k => k.high))
+  const low20BeforeToday = Math.min(...recent20.map(k => k.low))
+
+  // 今天是否突破20日高点
+  if (today.close <= high20BeforeToday) return null
+
+  // 突破日涨幅（当日收益率）
+  const dayReturn = (today.close - today.open) / today.open
+  // 用今日ATR近似（突破日波动放大）
+  const todayRange = Math.max(
+    today.high - today.low,
+    Math.abs(today.high - prev.close),
+    Math.abs(today.low - prev.close)
+  )
+  const volatility = todayRange / today.close
+  if (volatility <= 0) return null
+
+  const strength = dayReturn / volatility
+  const isStrong = strength > 2
+
+  return {
+    isStrong,
+    breakoutDay: today,
+    dayLow: today.low,
+    dayOpen: today.open,
+    dayClose: today.close,
+    strength,
+    high20BeforeToday,
+    low20BeforeToday,
+  }
+}
+
+/**
+ * 强突破场景的止损价：突破日低点 - 0.5×ATR（结构止损，更紧）
+ */
+export function calcStrongBreakoutStop(buyPrice, atr, breakoutDayLow) {
+  const stop = breakoutDayLow - 0.5 * atr
+  return Math.max(stop, 0.01)
+}
+
+/**
+ * 强突破场景的目标价：盘整幅度投影（AB=CD）
+ * 盘整幅度 = 突破前20日高点 - 突破前20日低点
+ * 目标价 = 突破位 + 盘整幅度（市场结构而非盈亏比反推）
+ */
+export function calcStrongBreakoutTarget(high20BeforeToday, low20BeforeToday) {
+  const consolidationRange = high20BeforeToday - low20BeforeToday
+  if (consolidationRange <= 0) return null
+  return +(high20BeforeToday + consolidationRange).toFixed(2)
+}
+
+/**
  * 计算仓位
  */
 export function calcPosition(totalCapital, buyPrice, stopPrice, strategy) {

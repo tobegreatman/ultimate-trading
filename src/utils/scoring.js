@@ -147,6 +147,22 @@ const STYLE_WEIGHTS = {
   long:  { technical: 0.20, fundamental: 0.38, capital: 0.22, risk: 0.20 },
 }
 
+// 技术面评分实际计入的信号来源（共 9 项对应 8 个子项，均线斜率并入均线排列项）
+// 注意：'量价' 由 indicators.js 产出但属资金面（经 priceVolumeSignal 进入资金维度），
+// 不参与技术面评分，需在共振统计与数据点计数中排除，避免虚增共振系数与失真数据点
+const TECH_SCORED_SOURCES = new Set(['MA', '均线斜率', 'MACD', 'KDJ', 'RSI', 'BOLL', '短期反转', '量能', '价格位置'])
+
+// 按日期升序排序的防御性归一化（返回新数组，不修改原数据，避免影响 UI 图表渲染）
+// 资金面各数据源后端排序约定不一致（主力/融资融券/北向为升序，股东户数为降序），
+// 评分引擎统一归一化为升序（最新在后），消除对后端契约的隐式依赖
+const sortByDateAsc = (arr) => Array.isArray(arr)
+  ? [...arr].sort((a, b) => {
+      const ta = a?.date ? new Date(a.date).getTime() : 0
+      const tb = b?.date ? new Date(b.date).getTime() : 0
+      return ta - tb
+    })
+  : arr
+
 export function calculateScore(techSignals = [], fundamental = null, capitalFlow = null, industry = '', style = 'short', riskItems = null, marketCtx = null) {
   const dimensions = {
     technical: { score: 0, max: 0, items: [] },  // max 由子项求和动态决定
@@ -369,8 +385,9 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   tech.max = tech.items.reduce((s, i) => s + i.max, 0)
 
   // P1: 多指标共振系数 — 多维度同向时加强信号权重（按指标来源去重，避免单指标多信号虚增）
-  const bullSources = new Set(techSignals.filter(s => s.type === 'bullish').map(s => s.source))
-  const bearSources = new Set(techSignals.filter(s => s.type === 'bearish').map(s => s.source))
+  // 仅统计被技术面评分计入的来源，排除 '量价' 等资金面来源，避免共振系数虚增
+  const bullSources = new Set(techSignals.filter(s => s.type === 'bullish' && TECH_SCORED_SOURCES.has(s.source)).map(s => s.source))
+  const bearSources = new Set(techSignals.filter(s => s.type === 'bearish' && TECH_SCORED_SOURCES.has(s.source)).map(s => s.source))
   const bullCount = bullSources.size
   const bearCount = bearSources.size
   if (bullCount >= 5) {
@@ -658,7 +675,7 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     if (amtStr) mfDesc += `（${amtStr}）`
 
     // 主力资金趋势加成（含今日日内数据）
-    const mfData = capitalFlow?._mainForceData
+    const mfData = sortByDateAsc(capitalFlow?._mainForceData)
     if (mfData && mfData.length >= 10) {
       const recent5Avg = mfData.slice(-5).reduce((s, d) => s + (d.mainNetInflow || 0), 0) / 5
       const prev5Avg = mfData.slice(-10, -5).reduce((s, d) => s + (d.mainNetInflow || 0), 0) / 5
@@ -729,7 +746,7 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     marginScore = Math.max(0, Math.min(5, marginScore))
 
     // 做空信号检测：融券余额日环比（使用相对比例过滤小额误报）
-    const marginHistory = capitalFlow?._marginData?.data
+    const marginHistory = sortByDateAsc(capitalFlow?._marginData?.data)
     if (marginHistory && marginHistory.length >= 2) {
       const rqLatest = marginHistory[marginHistory.length - 1]?.rqBalance || 0
       const rqPrev = marginHistory[marginHistory.length - 2]?.rqBalance || 0
@@ -793,9 +810,10 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
     else { shScore = 0; shDesc = '筹码高度分散' }
 
     // 近3期趋势修正：连续集中加分，连续分散减分（要求每期幅度 > 1%）
-    const shData = capitalFlow?._shareholderData
+    // 股东户数后端为降序（最新在前），归一化为升序后取末尾 3 期即最新 3 期
+    const shData = sortByDateAsc(capitalFlow?._shareholderData)
     if (shData && shData.length >= 3) {
-      const recent3 = shData.slice(0, 3)
+      const recent3 = shData.slice(-3)
       const allConcentrating = recent3.every(d => d.changeRatio < -1)
       const allDispersing = recent3.every(d => d.changeRatio > 1)
       if (allConcentrating) {
@@ -964,7 +982,12 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
   const fundDataCount = fund.items.filter(i => !i.desc.includes('暂无数据')).length
   const capDataCount = cap.items.filter(i => !i.desc.includes('暂无数据')).length
   const riskDataCount = risk.items.filter(i => !isRiskPlaceholder(i)).length
-  const techDataCount = tech.items.length
+  // 技术面有效数据点：仅统计被技术面评分计入且非中性的来源数量
+  // tech.items 恒为 8（缺信号时给中性分），用 items.length 会让 totalDataPoints 恒 ≥8，
+  // 导致下文 "数据不足/数据稀缺" 提示永不触发。改为按真实信号来源去重计数（0-9）
+  const techDataCount = new Set(
+    techSignals.filter(s => s.type !== 'neutral' && TECH_SCORED_SOURCES.has(s.source)).map(s => s.source)
+  ).size
   const totalDataPoints = fundDataCount + capDataCount + riskDataCount + techDataCount
   let confidence, confidenceStars
   if (fundDataCount >= 4 && capDataCount >= 3 && riskDataCount >= 2) {
@@ -979,8 +1002,9 @@ export function calculateScore(techSignals = [], fundamental = null, capitalFlow
 
   // 操作建议 — 综合评分 + 风格感知 + 资金面/技术面信号 + 维度冲突检测
   let suggestion, suggestionColor
-  const bullishCount = techSignals.filter(s => s.type === 'bullish').length
-  const bearishCount = techSignals.filter(s => s.type === 'bearish').length
+  const techScoredSignals = techSignals.filter(s => TECH_SCORED_SOURCES.has(s.source))
+  const bullishCount = techScoredSignals.filter(s => s.type === 'bullish').length
+  const bearishCount = techScoredSignals.filter(s => s.type === 'bearish').length
   const techPct = tech.score / tech.max
   const capPct = cap.score / cap.max
   const capitalBullish = capPct >= 0.65

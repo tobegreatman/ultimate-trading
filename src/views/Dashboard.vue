@@ -979,7 +979,7 @@ function fmtCap(v) {
 }
 
 function goToStock(code, name) {
-  watchlistStore.addStock(code, name)
+  watchlistStore.addStock(code, name, activeStrategy.value)
   router.push({
     path: '/stock-analysis',
     query: {
