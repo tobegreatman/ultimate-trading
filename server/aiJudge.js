@@ -24,6 +24,7 @@ try {
 const API_KEY = process.env.GLM_API_KEY
 const AI_CACHE_TTL = 60 * 1000  // 1分钟缓存
 const AI_CACHE_MAX_SIZE = 100
+const AI_TIMEOUT_MS = 30 * 1000  // API 超时 30 秒
 const aiCache = new Map()
 
 // 允许的模型白名单（key 为前端传入的标识，value 为智谱 API 实际模型名）
@@ -52,6 +53,67 @@ function getClient() {
     apiKey: API_KEY,
     baseURL: 'https://open.bigmodel.cn/api/paas/v4',
   })
+}
+
+/**
+ * 输出后校验：检查 AI 输出的价位是否全部来自候选表、方向是否正确
+ * 返回 { violations: string[] } 为空则通过
+ */
+function validateAIOutput(text, candidates, latestClose) {
+  const violations = []
+  if (!candidates || !latestClose) return violations
+
+  // 候选价位集合（字符串形式，含2位小数）
+  const validPrices = new Set([
+    candidates.latestClose, candidates.ma5, candidates.ma20,
+    candidates.ma60, candidates.stop1atr, candidates.stop15atr,
+    candidates.stop2atr, candidates.tgt2atr, candidates.tgt3atr,
+    candidates.swingHigh20, candidates.swingLow20,
+  ].filter(Boolean).map(p => Number(p).toFixed(2)))
+
+  // 提取输出中所有"XX元"格式的价位（包括"XX.X元"、"XX.XX元"）
+  const priceMatches = [...text.matchAll(/(\d+(?:\.\d{1,2})?)\s*元/g)]
+  const mentionedPrices = priceMatches.map(m => Number(m[1]).toFixed(2))
+
+  // 检查1：所有提到的价位必须在候选表内
+  for (const p of mentionedPrices) {
+    if (!validPrices.has(p)) {
+      violations.push(`价位 ${p}元 不在候选表中（可能为编造）`)
+    }
+  }
+
+  // 检查2："突破XX元"的XX必须 > 当前价
+  const breakoutMatches = [...text.matchAll(/突破[^\d]*?(\d+(?:\.\d{1,2})?)\s*元/g)]
+  for (const m of breakoutMatches) {
+    const p = Number(m[1])
+    if (p <= latestClose) {
+      violations.push(`"突破${p}元" ≤ 当前价${latestClose}元（方向倒挂）`)
+    }
+  }
+
+  // 检查3："跌破XX元"的XX必须 < 当前价
+  const breakdownMatches = [...text.matchAll(/跌破[^\d]*?(\d+(?:\.\d{1,2})?)\s*元/g)]
+  for (const m of breakdownMatches) {
+    const p = Number(m[1])
+    if (p >= latestClose) {
+      violations.push(`"跌破${p}元" ≥ 当前价${latestClose}元（方向倒挂）`)
+    }
+  }
+
+  // 检查4：止损价位必须来自候选止损价位（含前低、MA20、ATR止损）
+  const stopMatches = [...text.matchAll(/止损[^。]*?(\d+(?:\.\d{1,2})?)\s*元/g)]
+  const validStops = new Set([
+    candidates.stop1atr, candidates.stop15atr, candidates.stop2atr,
+    candidates.swingLow20, candidates.ma20,
+  ].filter(Boolean).map(p => Number(p).toFixed(2)))
+  for (const m of stopMatches) {
+    const p = Number(m[1]).toFixed(2)
+    if (!validStops.has(p)) {
+      violations.push(`止损价 ${p}元 不在候选止损价位中（可能为自创）`)
+    }
+  }
+
+  return violations
 }
 
 function buildPrompt(body) {
@@ -93,16 +155,26 @@ function buildPrompt(body) {
       prompt += `
 
 ## 候选价位参考（重要：所有价位必须从下表引用，禁止自行计算或编造）
-| 用途 | 价位 | 说明 |
-|------|------|------|
+| 用途 | 价位 | 距现价 |
+|------|------|--------|
 | 当前价 | ${c.latestClose}元 | 基准 |
-| MA5 | ${c.ma5}元 | 短期均线 |
-| MA20 | ${c.ma20}元 | 中期均线 |${c.ma60 != null ? `\n| MA60 | ${c.ma60}元 | 长期均线 |` : ''}
-| 止损1×ATR | ${c.stop1atr}元 | 距现价-${t.atrPct}%，最紧 |
-| 止损1.5×ATR | ${c.stop15atr}元 | 距现价-${(t.atrPct * 1.5).toFixed(1)}% |
-| 止损2×ATR | ${c.stop2atr}元 | 距现价-${(t.atrPct * 2).toFixed(1)}%，最宽 |
-| 目标2×ATR | ${c.tgt2atr}元 | 距现价+${(t.atrPct * 2).toFixed(1)}% |
-| 目标3×ATR | ${c.tgt3atr}元 | 距现价+${(t.atrPct * 3).toFixed(1)}% |`
+| MA5 | ${c.ma5}元 | ${((c.ma5 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |
+| MA20 | ${c.ma20}元 | ${((c.ma20 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |${c.ma60 != null ? `\n| MA60 | ${c.ma60}元 | ${((c.ma60 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.swingHigh20 != null ? `\n| 前高(20日最高) | ${c.swingHigh20}元 | +${((c.swingHigh20 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.swingLow20 != null ? `\n| 前低(20日最低) | ${c.swingLow20}元 | ${((c.swingLow20 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}
+| 止损1×ATR | ${c.stop1atr}元 | -${t.atrPct}% |
+| 止损1.5×ATR | ${c.stop15atr}元 | -${(t.atrPct * 1.5).toFixed(1)}% |
+| 止损2×ATR | ${c.stop2atr}元 | -${(t.atrPct * 2).toFixed(1)}% |
+| 目标2×ATR | ${c.tgt2atr}元 | +${(t.atrPct * 2).toFixed(1)}% |
+| 目标3×ATR | ${c.tgt3atr}元 | +${(t.atrPct * 3).toFixed(1)}% |
+
+## 真实盈亏比配对表（基于个股实际技术结构，非固定常量）
+| 止损 | 目标 | 盈亏比 | 说明 |
+|------|------|--------|------|${c.rrStruct != null ? `\n| 前低(${c.swingLow20}元) | 前高(${c.swingHigh20}元) | ${c.rrStruct}:1 | 结构盈亏比（最真实） |` : ''}${c.rrMa20High != null ? `\n| MA20(${c.ma20}元) | 前高(${c.swingHigh20}元) | ${c.rrMa20High}:1 | 均线支撑+结构阻力 |` : ''}${c.rrAtrHigh != null ? `\n| 止损1×ATR(${c.stop1atr}元) | 前高(${c.swingHigh20}元) | ${c.rrAtrHigh}:1 | ATR止损+结构目标 |` : ''}
+
+**关键规则**：
+1. 盈亏比是(止损,目标)配对组合，必须成对引用，如"止损${c.swingLow20 || c.stop1atr}元+目标${c.swingHigh20 || c.tgt2atr}元→盈亏比X:1"
+2. 优先引用真实结构盈亏比(rrStruct)，反映个股实际风险收益结构
+3. 盈亏比<1.5不建议入场；≥2为优秀；1.5-2为可接受
+4. 若前高≤当前价(已突破前高)，则结构目标失效，改用目标2×ATR(${c.tgt2atr}元)或目标3×ATR(${c.tgt3atr}元)`
     }
   }
 
@@ -182,26 +254,27 @@ ${previousAdvice.slice(0, 500)}`
 - 多空交织 → "震荡格局，等待方向明确"
 
 ### 二、核心要点（120-180字，3-4个）
-每个要点**必须单独成行**（用换行符分隔，禁止挤在一行）：
-**标题1**：分析内容
-**标题2**：分析内容
-**标题3**：分析内容
-标题具体到核心矛盾（如"**均线空头压制**"）。分析内容必须引用具体数字。
+每个要点**必须单独成行**（用换行符分隔，禁止挤在一行）。格式为"**<具体标题>**：<分析内容>"，标题要具体到核心矛盾（如"**均线空头压制**"、"**主力资金出逃**"），分析内容必须引用具体数字。示例：
+**均线空头压制**：当前价XX元低于MA20(XX元)X%，空头排列明显
+**主力资金出逃**：净流出X亿，融资余额下降X万
 
 ### 三、操作建议（120-180字）
 每个子项**必须单独成行**（用换行符分隔）。**根据结论类型选择对应模板，不要套用同一套：**
 
 ▎结论="偏弱/回避"→ 输出【观望触发条件】+【风险提示】
-**观望触发条件**：未来什么信号出现才值得重新关注（这是"等待"条件，不是现在入场）
-**风险提示**：若已套牢持仓，给出减仓/止损信号
+**观望触发条件**：未来什么信号出现才值得重新关注（这是"等待"条件，不是现在入场）。必须指定**观察周期**（如"日线连续3日"）和**确认次数**（如"2次确认"）
+**风险提示**：若已套牢持仓，给出减仓/止损信号${candidates ? `（止损价从候选表选择）` : ''}
 
-▎结论="偏多/可关注"→ 输出【入场条件】+【止损条件】
-**入场条件**：明确触发信号
+▎结论="偏多/可关注"→ 输出【入场条件】+【止损条件】+【目标与盈亏比】+【仓位建议】
+**入场条件**：明确触发信号（如"日线收盘站稳XX元"）
 **止损条件**：${candidates ? `从候选价位表中选择一个止损价` : '明确退出信号'}
+**目标与盈亏比**：${candidates ? `从盈亏比配对表选择一对，必须显式说明配对关系。优先用真实结构盈亏比(rrStruct)。示例"止损前低${candidates.swingLow20 || candidates.stop1atr}元+目标前高${candidates.swingHigh20 || candidates.tgt2atr}元→盈亏比X:1"。盈亏比<1.5不建议入场` : '明确目标价'}
+**仓位建议**：根据盈亏比给仓位（盈亏比≥2→5-7成；1.5-2→3-5成；<1.5→不入场）
 
-▎结论="震荡"→ 输出【向上突破信号】+【向下破位信号】
-**向上突破信号**：xxx
-**向下破位信号**：xxx
+▎结论="震荡"→ 输出【向上突破信号】+【向下破位信号】+【仓位建议】
+**向上突破信号**：明确触发条件（如"日线收盘站稳XX元3日"）
+**向下破位信号**：明确触发条件（如"日线收盘跌破XX元"）
+**仓位建议**：震荡期建议≤3成，突破确认后加仓
 
 ### 四、上次建议复查（20-50字，若适用）
 如果上次建议了价位且当前已到该价位附近（±2%内），必须重新评估，不能简单重复"继续观望"。`
@@ -222,11 +295,18 @@ async function handleAIJudge(ctx) {
     return
   }
 
-  // 缓存检查（Key 基于数值签名，避免 keySignals 字符串顺序不稳定问题）
+  // 缓存检查（Key 含价格/趋势数值签名，避免价格变化但评分不变时返回旧结果）
   const model = MODEL_MAP[body.model] ? body.model : DEFAULT_MODEL
   const sigHash = (body.techSummary?.keySignals || '')
     .split('；').filter(Boolean).sort().join('|').slice(0, 80)
-  const cacheKey = `${body.code}_${body.scoreSummary?.total || 0}_${sigHash}_${model}`
+  // 价格签名：最新价 + MA20 + ATR 取整拼接，价格变化即失效
+  const priceSig = [
+    body.priceAction?.latestClose,
+    body.trendContext?.ma20Price,
+    body.trendContext?.atrValue,
+    body.priceAction?.change5d,
+  ].map(v => v != null ? Number(v).toFixed(2) : '_').join('-')
+  const cacheKey = `${body.code}_${body.scoreSummary?.total || 0}_${sigHash}_${priceSig}_${model}`
   const cached = aiCache.get(cacheKey)
 
   // 安全写入：连接关闭后 res.write 会抛 ERR_STREAM_WRITE_AFTER_END / EPIPE，必须防护
@@ -265,7 +345,8 @@ async function handleAIJudge(ctx) {
   let fullText = ''
 
   try {
-    const stream = await client.chat.completions.create({
+    // P0-2: 30秒超时保护，避免 API 卡住时前端死等
+    const streamPromise = client.chat.completions.create({
       model: model,
       messages: [{ role: 'user', content: prompt }],
       stream: true,
@@ -273,6 +354,10 @@ async function handleAIJudge(ctx) {
       // 尝试关闭 thinking 模式，避免推理过程耗尽 token 导致无最终输出
       thinking: { type: 'disabled' },
     })
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('AI 响应超时（30秒）')), AI_TIMEOUT_MS)
+    })
+    const stream = await Promise.race([streamPromise, timeoutPromise])
 
     ctx.req.on('close', () => {
       stream.controller?.abort()
@@ -281,8 +366,13 @@ async function handleAIJudge(ctx) {
     let chunkCount = 0
     let hasReasoning = false
     let reasoningText = ''
+    const startTime = Date.now()
     for await (const chunk of stream) {
       if (closed) break
+      // 循环内也检查超时（流式响应可能慢速卡住）
+      if (Date.now() - startTime > AI_TIMEOUT_MS) {
+        throw new Error('AI 流式响应超时（30秒）')
+      }
       chunkCount++
       const choice = chunk.choices?.[0]
       const delta = choice?.delta
@@ -305,6 +395,15 @@ async function handleAIJudge(ctx) {
       safeWrite(`data: ${JSON.stringify({ type: 'text', content: reasoningText })}\n\n`)
     }
     console.log(`[ai-judge] code=${body.code} model=${model} chunks=${chunkCount} reasoning=${hasReasoning} reasoningLen=${reasoningText.length} contentLen=${fullText.length}`)
+
+    // P0-1: 输出后校验——检查价位是否在候选表、方向是否正确
+    const violations = validateAIOutput(fullText, body.trendContext?.candidates, body.priceAction?.latestClose)
+    if (violations.length > 0) {
+      const warning = `\n\n---\n⚠️ **校验警告**（${violations.length}处违规，请人工核实）：\n${violations.map(v => `- ${v}`).join('\n')}`
+      fullText += warning
+      safeWrite(`data: ${JSON.stringify({ type: 'text', content: warning })}\n\n`)
+      console.log(`[ai-judge] VALIDATION VIOLATIONS: ${violations.join(' | ')}`)
+    }
 
     // 缓存完整结果 + LRU 淘汰
     if (fullText) {
