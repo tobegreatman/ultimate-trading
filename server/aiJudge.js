@@ -24,7 +24,7 @@ try {
 const API_KEY = process.env.GLM_API_KEY
 const AI_CACHE_TTL = 60 * 1000  // 1分钟缓存
 const AI_CACHE_MAX_SIZE = 100
-const AI_TIMEOUT_MS = 30 * 1000  // API 超时 30 秒
+const AI_TIMEOUT_MS = 45 * 1000  // API 超时 45 秒
 const aiCache = new Map()
 
 // 允许的模型白名单（key 为前端传入的标识，value 为智谱 API 实际模型名）
@@ -110,6 +110,27 @@ function validateAIOutput(text, candidates, latestClose) {
     const p = Number(m[1]).toFixed(2)
     if (!validStops.has(p)) {
       violations.push(`止损价 ${p}元 不在候选止损价位中（可能为自创）`)
+    }
+  }
+
+  // 检查5：数值比较关系校验
+  // 匹配 "X元...低于/高于...Y元" 模式，验证数值方向与比较词一致
+  // 中间字符限制不含"元"字且≤30字，避免跨多个价位误匹配
+  const ltWords = ['低于', '跌破', '下方', '之下', '不及', '少于', '小于']
+  const gtWords = ['高于', '突破', '上方', '之上', '超过', '大于', '多于']
+  const allCmpWords = [...ltWords, ...gtWords].join('|')
+  const cmpRegex = new RegExp(
+    `(\\d+\\.\\d{1,2})\\s*元([^元]{0,30}?)(${allCmpWords})([^元]{0,30}?)(\\d+\\.\\d{1,2})\\s*元`,
+    'g'
+  )
+  for (const m of [...text.matchAll(cmpRegex)]) {
+    const a = Number(m[1])
+    const cmp = m[3]
+    const b = Number(m[5])
+    if (ltWords.includes(cmp) && a > b) {
+      violations.push(`"${a}元${cmp}${b}元" 数值比较错误（${a} > ${b}，应为"高于"）`)
+    } else if (gtWords.includes(cmp) && a < b) {
+      violations.push(`"${a}元${cmp}${b}元" 数值比较错误（${a} < ${b}，应为"低于"）`)
     }
   }
 
@@ -239,6 +260,7 @@ ${previousAdvice.slice(0, 500)}`
 ## 绝对约束（违反即作废，必须严格遵守）
 1. **价位引用规则**：${hasCandidates ? '所有提到价位必须从上方"候选价位参考"表中引用，**禁止自行计算或编造任何新价位**。' : '所有价位必须基于当前价计算，禁止编造。'}
 2. **方向规则**：
+   - **多空方向必须直接引用上方"当前趋势阶段"中的"价在线上/线下"判断**，禁止自行比较价位大小得出多空结论（数值比较极易出错，如把20.34误判为低于20.28）
    - "突破XX元"的XX 必须 > 当前价${latestClose ?? '?'}元
    - "跌破XX元"的XX 必须 < 当前价${latestClose ?? '?'}元
    - 禁止方向倒挂（如"突破一个比当前价低的价位"）
@@ -254,8 +276,10 @@ ${previousAdvice.slice(0, 500)}`
 - 多空交织 → "震荡格局，等待方向明确"
 
 ### 二、核心要点（120-180字，3-4个）
-每个要点**必须单独成行**（用换行符分隔，禁止挤在一行）。格式为"**<具体标题>**：<分析内容>"，标题要具体到核心矛盾（如"**均线空头压制**"、"**主力资金出逃**"），分析内容必须引用具体数字。示例：
-**均线空头压制**：当前价XX元低于MA20(XX元)X%，空头排列明显
+每个要点**必须单独成行**（用换行符分隔，禁止挤在一行）。格式为"**<具体标题>**：<分析内容>"，标题要具体到核心矛盾，分析内容必须引用具体数字。
+**关键规则**：多空方向**必须直接引用**上方"当前趋势阶段"中"价在线上/线下"的预计算结论，**禁止自行比较价位大小**（如禁止自己判断"20.34是否低于20.28"）。"价在线上"只能用"高于/之上/上方"，"价在线下"只能用"低于/之下/下方"。示例：
+**均线下方运行**：当前价XX元，价在线下（引用趋势阶段），MA20为XX元构成压制
+**均线上方运行**：当前价XX元，价在线上（引用趋势阶段），MA20为XX元构成支撑
 **主力资金出逃**：净流出X亿，融资余额下降X万
 
 ### 三、操作建议（120-180字）
@@ -345,7 +369,7 @@ async function handleAIJudge(ctx) {
   let fullText = ''
 
   try {
-    // P0-2: 30秒超时保护，避免 API 卡住时前端死等
+    // P0-2: 45秒超时保护，避免 API 卡住时前端死等
     const streamPromise = client.chat.completions.create({
       model: model,
       messages: [{ role: 'user', content: prompt }],
@@ -355,7 +379,7 @@ async function handleAIJudge(ctx) {
       thinking: { type: 'disabled' },
     })
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('AI 响应超时（30秒）')), AI_TIMEOUT_MS)
+      setTimeout(() => reject(new Error('AI 响应超时（45秒）')), AI_TIMEOUT_MS)
     })
     const stream = await Promise.race([streamPromise, timeoutPromise])
 
@@ -371,7 +395,7 @@ async function handleAIJudge(ctx) {
       if (closed) break
       // 循环内也检查超时（流式响应可能慢速卡住）
       if (Date.now() - startTime > AI_TIMEOUT_MS) {
-        throw new Error('AI 流式响应超时（30秒）')
+        throw new Error('AI 流式响应超时（45秒）')
       }
       chunkCount++
       const choice = chunk.choices?.[0]
@@ -396,12 +420,9 @@ async function handleAIJudge(ctx) {
     }
     console.log(`[ai-judge] code=${body.code} model=${model} chunks=${chunkCount} reasoning=${hasReasoning} reasoningLen=${reasoningText.length} contentLen=${fullText.length}`)
 
-    // P0-1: 输出后校验——检查价位是否在候选表、方向是否正确
+    // 输出后校验——仅记日志，不追加前端输出（避免冗余警告污染 AI 文本）
     const violations = validateAIOutput(fullText, body.trendContext?.candidates, body.priceAction?.latestClose)
     if (violations.length > 0) {
-      const warning = `\n\n---\n⚠️ **校验警告**（${violations.length}处违规，请人工核实）：\n${violations.map(v => `- ${v}`).join('\n')}`
-      fullText += warning
-      safeWrite(`data: ${JSON.stringify({ type: 'text', content: warning })}\n\n`)
       console.log(`[ai-judge] VALIDATION VIOLATIONS: ${violations.join(' | ')}`)
     }
 
