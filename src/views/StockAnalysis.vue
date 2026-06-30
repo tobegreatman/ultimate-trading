@@ -192,6 +192,7 @@
             :ai-plan="aiPlan"
             :ai-judge-loading="aiJudgeLoading"
             :ai-judge-error="aiJudgeError"
+            :ai-judge-warning="aiJudgeWarning"
             :ai-judge-enabled="aiJudgeEnabled"
             :ai-model="aiModel"
             :stock-code="selectedCode"
@@ -309,6 +310,7 @@ const aiJudgeText = ref('')
 const aiPlan = ref(null)
 const aiJudgeLoading = ref(false)
 const aiJudgeError = ref('')
+const aiJudgeWarning = ref([])
 const aiJudgeEnabled = ref(false)
 const aiModel = ref('glm-4.7-flash')
 let aiAbortController = null
@@ -593,10 +595,12 @@ function triggerAIJudge() {
   aiJudgeText.value = ''
   aiPlan.value = null
   aiJudgeError.value = ''
+  aiJudgeWarning.value = []
   aiJudgeLoading.value = true
 
   aiAbortController = fetchAIJudge(payload, {
     onText: (chunk) => { aiJudgeText.value += chunk },
+    onWarning: (violations) => { aiJudgeWarning.value = violations || [] },
     onDone: () => {
       // 从完整文本中提取结构化JSON交易计划，并从显示文本中剥离
       const jsonMatch = aiJudgeText.value.match(/```json\s*(\{[^}]+\})\s*```/)

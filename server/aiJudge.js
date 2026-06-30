@@ -103,8 +103,8 @@ function validateAIOutput(text, candidates, latestClose) {
   }
 
   // 检查4：止损价位必须来自候选止损价位（仅含配对表中出现的止损价）
-  // stop15atr/stop2atr无对应盈亏比配对，移除以防止AI选用后自行计算盈亏比
-  const stopMatches = [...text.matchAll(/止损[^。]*?(\d+(?:\.\d{1,2})?)\s*元/g)]
+  // 覆盖止损/止损线/止损位/离场位/保护位/止损价等同义词，防止AI用别名绕过校验
+  const stopMatches = [...text.matchAll(/(?:止损[位线]?|离场位|保护位)[^。]*?(\d+(?:\.\d{1,2})?)\s*元/g)]
   const validStops = new Set([
     candidates.stop1atr,
     candidates.swingLow20, candidates.swingLow60, candidates.ma20,
@@ -138,16 +138,32 @@ function validateAIOutput(text, candidates, latestClose) {
     }
   }
 
-  // 检查6：入场价与止损价矛盾校验（做多时止损价必须低于入场价）
-  // 防止AI把"MA20跟踪止损"误当入场价，导致入场价<止损价的逻辑矛盾
+  // 检查6：入场价与止损价矛盾校验（按方向分支）
+  // 做多时止损价必须 < 入场价；做空时止损价必须 > 入场价
+  // 防止AI把"MA20跟踪止损"误当入场价，导致入场价与止损价逻辑矛盾
   // 排除括号内价位（如"MA20(6.24元)"），取入场条件描述中最后一个裸价位作为入场价
+  let direction = ''
+  const jsonDirMatch = text.match(/```json\s*\{[^}]*?"direction"\s*:\s*"([^"]+)"/)
+  if (jsonDirMatch) {
+    direction = jsonDirMatch[1]
+  } else {
+    if (/偏空|回避|看空/.test(text)) direction = '偏空'
+    else if (/偏多|可关注|看多/.test(text)) direction = '偏多'
+  }
+  const isShort = direction.includes('空') && !direction.includes('多')
   const entryMatch = text.match(/入场[^（(。]*?(\d+(?:\.\d{1,2})?)\s*元(?![）)])/)
   const stopMatchForEntry = text.match(/止损[^。]*?(\d+(?:\.\d{1,2})?)\s*元/)
   if (entryMatch && stopMatchForEntry) {
     const entryPrice = Number(entryMatch[1])
     const stopPrice = Number(stopMatchForEntry[1])
-    if (stopPrice >= entryPrice) {
-      violations.push(`止损价${stopPrice}元 ≥ 入场价${entryPrice}元（做多时止损必须在入场价下方，可能混淆了入场价与止损价）`)
+    if (isShort) {
+      if (stopPrice <= entryPrice) {
+        violations.push(`止损价${stopPrice}元 ≤ 入场价${entryPrice}元（做空时止损必须在入场价上方，可能混淆了入场价与止损价）`)
+      }
+    } else {
+      if (stopPrice >= entryPrice) {
+        violations.push(`止损价${stopPrice}元 ≥ 入场价${entryPrice}元（做多时止损必须在入场价下方，可能混淆了入场价与止损价）`)
+      }
     }
   }
 
@@ -157,8 +173,8 @@ function validateAIOutput(text, candidates, latestClose) {
     candidates.rrTrailing, candidates.rrMeasured, candidates.rrStruct60,
     candidates.rrTrailing2,
   ].filter(Boolean).map(r => Number(r).toFixed(2)))
-  // 匹配"盈亏比X:1""盈亏比X：1""盈亏比X比1""盈亏比X倍"等变体
-  const rrMatches = [...text.matchAll(/盈亏比[^\d]{0,10}?(\d+(?:\.\d{1,2})?)\s*(?:[:：]|比)\s*1|盈亏比[^\d]{0,10}?(\d+(?:\.\d{1,2})?)\s*倍/g)]
+  // 匹配"盈亏比X:1""收益风险比X:1""风险回报比X倍""赔率X:1"等变体
+  const rrMatches = [...text.matchAll(/(?:盈亏比|收益风险比|风险回报比|赔率)[^\d]{0,10}?(\d+(?:\.\d{1,2})?)\s*(?:[:：]|比)\s*1|(?:盈亏比|收益风险比|风险回报比|赔率)[^\d]{0,10}?(\d+(?:\.\d{1,2})?)\s*倍/g)]
   for (const m of rrMatches) {
     const rr = Number(m[1] || m[2]).toFixed(2)
     if (validRRs.size > 0 && !validRRs.has(rr)) {
@@ -230,6 +246,8 @@ function buildPrompt(body) {
     if (t.candidates) {
       const c = t.candidates
       const isTrending = t.stage === '上升趋势' || t.stage === '下降趋势'
+      const hasRR = c.rrStruct != null || c.rrMa20High != null || c.rrAtrHigh != null
+        || c.rrTrailing != null || c.rrMeasured != null || c.rrStruct60 != null || c.rrTrailing2 != null
       prompt += `
 
 ## 候选价位参考（重要：所有价位必须从下表引用，禁止自行计算或编造）
@@ -239,8 +257,6 @@ function buildPrompt(body) {
 | MA5 | ${c.ma5}元 | ${((c.ma5 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |
 | MA20 | ${c.ma20}元 | ${((c.ma20 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |${c.ma60 != null ? `\n| MA60 | ${c.ma60}元 | ${((c.ma60 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.swingHigh20 != null ? `\n| 前高20日(swing高) | ${c.swingHigh20}元 | ${(c.swingHigh20 >= c.latestClose ? '+' : '')}${((c.swingHigh20 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.swingLow20 != null ? `\n| 前低20日(swing低) | ${c.swingLow20}元 | ${((c.swingLow20 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.swingHigh60 != null ? `\n| 前高60日(结构阻力) | ${c.swingHigh60}元 | ${(c.swingHigh60 >= c.latestClose ? '+' : '')}${((c.swingHigh60 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.swingLow60 != null ? `\n| 前低60日(结构支撑) | ${c.swingLow60}元 | ${((c.swingLow60 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.tgtMeasured != null ? `\n| 突破测量目标 | ${c.tgtMeasured}元 | ${(c.tgtMeasured >= c.latestClose ? '+' : '')}${((c.tgtMeasured - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}
 | 止损1×ATR | ${c.stop1atr}元 | -${t.atrPct}% |
-| 止损1.5×ATR | ${c.stop15atr}元 | -${(t.atrPct * 1.5).toFixed(1)}% |
-| 止损2×ATR | ${c.stop2atr}元 | -${(t.atrPct * 2).toFixed(1)}% |
 | 目标2×ATR | ${c.tgt2atr}元 | +${(t.atrPct * 2).toFixed(1)}% |
 | 目标3×ATR | ${c.tgt3atr}元 | +${(t.atrPct * 3).toFixed(1)}% |${c.stopTrailing2 != null ? `\n| 移动止损(涨1×ATR后) | ${c.stopTrailing2}元 | ${((c.stopTrailing2 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}${c.entryTrailing2 != null ? `\n| 移动入场(涨1×ATR后) | ${c.entryTrailing2}元 | +${((c.entryTrailing2 - c.latestClose) / c.latestClose * 100).toFixed(1)}% |` : ''}
 
@@ -248,11 +264,16 @@ function buildPrompt(body) {
 | 止损 | 目标 | 盈亏比 | 说明 |
 |------|------|--------|------|${c.rrStruct != null ? `\n| 前低20日(${c.swingLow20}元) | 前高20日(${c.swingHigh20}元) | ${c.rrStruct}:1 | 20日结构盈亏比（震荡行情适用） |` : ''}${c.rrMa20High != null ? `\n| MA20(${c.ma20}元) | 前高20日(${c.swingHigh20}元) | ${c.rrMa20High}:1 | 均线支撑+结构阻力 |` : ''}${c.rrAtrHigh != null ? `\n| 止损1×ATR(${c.stop1atr}元) | 前高20日(${c.swingHigh20}元) | ${c.rrAtrHigh}:1 | ATR止损+20日结构目标 |` : ''}${c.rrStruct60 != null ? `\n| 前低60日(${c.swingLow60}元) | 前高60日(${c.swingHigh60}元) | ${c.rrStruct60}:1 | 60日结构盈亏比（趋势行情更稳健） |` : ''}${c.rrMeasured != null ? `\n| 止损1×ATR(${c.stop1atr}元) | 突破测量目标(${c.tgtMeasured}元) | ${c.rrMeasured}:1 | 突破前高后等幅测量目标 |` : ''}${c.rrTrailing != null ? `\n| MA20跟踪止损(${c.ma20}元) | 目标3×ATR(${c.tgt3atr}元) | ${c.rrTrailing}:1 | 当前价顺势入场，跌破MA20止损（MA20为跟踪止损线非入场价） |` : ''}${c.rrTrailing2 != null ? `\n| 移动止损(${c.stopTrailing2}元) | 目标3×ATR(${c.tgt3atr}元) | ${c.rrTrailing2}:1 | 涨1×ATR后止损上移至MA20+1×ATR，锁定利润 |` : ''}
 
-**关键规则**：
+${hasRR ? `**关键规则**：
 1. 盈亏比是(止损,目标)配对组合，必须从上方配对表整行引用，禁止跨行拼接止损和目标
 2. ${isTrending ? (t.stage === '上升趋势' ? `优先引用rrMeasured或rrTrailing（上升趋势中20日swing前低/前高易被突破；已突破前高用rrMeasured等幅测量目标，未突破或需跟踪止损用rrTrailing的MA20跟踪+ATR扩展；若需结构参考用60日rrStruct60而非20日）` : `优先引用rrStruct60（下降趋势中rrTrailing要求price>MA20不满足、rrMeasured要求突破前高不满足，二者不可用；用60日swing高低点作为结构支撑/阻力）`) : `优先引用rrStruct（震荡行情中swing高低点作为支撑阻力有效）`}
 3. 盈亏比<1.5不建议入场；≥2为优秀；1.5-2为可接受
-4. 若前高20日≤当前价(已突破前高)，则20日结构目标失效，趋势中改用突破测量目标(${c.tgtMeasured || c.tgt3atr}元)或目标3×ATR(${c.tgt3atr}元)配MA20跟踪止损${c.rrTrailing != null ? `，即引用rrTrailing(${c.rrTrailing}:1)` : ''}`
+4. 若前高20日≤当前价(已突破前高)，则20日结构目标失效，趋势中改用突破测量目标(${c.tgtMeasured || c.tgt3atr}元)或目标3×ATR(${c.tgt3atr}元)配MA20跟踪止损${c.rrTrailing != null ? `，即引用rrTrailing(${c.rrTrailing}:1)` : ''}` : `**⚠️ 无可用盈亏比配对（必须遵守）**：
+当前所有技术结构均不满足盈亏比计算条件（前高/前低/MA20 关系不成立或已突破），无法形成有效的(止损,目标)配对。
+- 结论必须是"偏弱/回避"，禁止输出"偏多/可关注"或"震荡"
+- 禁止自行编造盈亏比、止损价或目标价
+- 操作建议只输出【观望触发条件】+【风险提示】，不输出入场/止损/目标/盈亏比
+- JSON 中 direction 填"偏空"，entry/stop/target/rr 填 null，position 填"观望"`}`
     }
   }
 
@@ -430,6 +451,9 @@ async function handleAIJudge(ctx) {
     ctx.set('Connection', 'keep-alive')
     ctx.respond = false
     safeWrite(`data: ${JSON.stringify({ type: 'text', content: cached.text })}\n\n`)
+    if (cached.violations?.length) {
+      safeWrite(`data: ${JSON.stringify({ type: 'warning', content: cached.violations })}\n\n`)
+    }
     safeWrite('data: [DONE]\n\n')
     safeEnd()
     return
@@ -498,15 +522,16 @@ async function handleAIJudge(ctx) {
     }
     console.log(`[ai-judge] code=${body.code} model=${model} chunks=${chunkCount} reasoning=${hasReasoning} reasoningLen=${reasoningText.length} contentLen=${fullText.length}`)
 
-    // 输出后校验——仅记日志，不追加前端输出（避免冗余警告污染 AI 文本）
+    // 输出后校验——违规时向前端推送 warning 事件（UI 标记，不污染 AI 文本）
     const violations = validateAIOutput(fullText, body.trendContext?.candidates, body.priceAction?.latestClose)
     if (violations.length > 0) {
       console.log(`[ai-judge] VALIDATION VIOLATIONS: ${violations.join(' | ')}`)
+      safeWrite(`data: ${JSON.stringify({ type: 'warning', content: violations })}\n\n`)
     }
 
-    // 缓存完整结果 + LRU 淘汰
+    // 缓存完整结果 + LRU 淘汰（含违规标记，避免缓存命中时丢失 warning）
     if (fullText) {
-      aiCache.set(cacheKey, { text: fullText, ts: Date.now() })
+      aiCache.set(cacheKey, { text: fullText, violations, ts: Date.now() })
       evictAICache()
     }
 

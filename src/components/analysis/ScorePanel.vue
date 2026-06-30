@@ -88,6 +88,15 @@
         </div>
         <div v-if="aiJudgeText" class="ai-content" v-html="renderedAIContent" />
         <span v-if="aiJudgeLoading && aiJudgeText" class="ai-cursor" />
+        <div v-if="aiJudgeWarning.length && !aiJudgeLoading" class="ai-warning">
+          <span class="ai-warning-icon">⚠️</span>
+          <div class="ai-warning-body">
+            <div class="ai-warning-title">AI 输出存在数据异常，请谨慎参考</div>
+            <ul class="ai-warning-list">
+              <li v-for="(v, i) in aiJudgeWarning" :key="i">{{ v }}</li>
+            </ul>
+          </div>
+        </div>
         <div v-if="aiPlan && !aiJudgeLoading" class="ai-trade-plan">
           <div class="ai-trade-plan-header">
             <span class="ai-trade-plan-title">结构化交易计划</span>
@@ -136,6 +145,7 @@ const props = defineProps({
   aiPlan: { type: Object, default: null },
   aiJudgeLoading: { type: Boolean, default: false },
   aiJudgeError: { type: String, default: '' },
+  aiJudgeWarning: { type: Array, default: () => [] },
   aiJudgeEnabled: { type: Boolean, default: false },
   aiModel: { type: String, default: 'glm-4.7-flash' },
   stockCode: { type: String, default: '' },
@@ -820,6 +830,40 @@ onMounted(() => {
   padding: 8px 12px;
   background: rgba(255,255,255,0.03);
   border-radius: var(--radius-sm);
+}
+
+.ai-warning {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-sm);
+}
+.ai-warning-icon {
+  font-size: 14px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.ai-warning-body {
+  flex: 1;
+  min-width: 0;
+}
+.ai-warning-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f59e0b;
+  margin-bottom: 4px;
+}
+.ai-warning-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ai-warning-list li {
+  word-break: break-all;
 }
 
 .ai-trade-plan {

@@ -2,7 +2,7 @@
  * AI 综合判断 SSE 客户端
  */
 
-export function fetchAIJudge(payload, { onText, onDone, onError }) {
+export function fetchAIJudge(payload, { onText, onDone, onError, onWarning }) {
   const controller = new AbortController()
 
   fetch('/api/stock-analysis/ai-judge', {
@@ -40,6 +40,7 @@ export function fetchAIJudge(payload, { onText, onDone, onError }) {
           const parsed = JSON.parse(data)
           if (parsed.type === 'text') onText(parsed.content)
           else if (parsed.type === 'error') onError(parsed.content)
+          else if (parsed.type === 'warning') onWarning?.(parsed.content)
         } catch { /* skip malformed */ }
       }
     }
