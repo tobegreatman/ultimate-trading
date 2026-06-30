@@ -88,6 +88,34 @@
         </div>
         <div v-if="aiJudgeText" class="ai-content" v-html="renderedAIContent" />
         <span v-if="aiJudgeLoading && aiJudgeText" class="ai-cursor" />
+        <div v-if="aiPlan && !aiJudgeLoading" class="ai-trade-plan">
+          <div class="ai-trade-plan-header">
+            <span class="ai-trade-plan-title">结构化交易计划</span>
+            <span class="ai-trade-plan-dir" :class="planDirClass">{{ aiPlan.direction || '--' }}</span>
+          </div>
+          <div class="ai-trade-plan-grid">
+            <div class="ai-trade-plan-item">
+              <span class="label">入场价</span>
+              <span class="value">{{ aiPlan.entry != null ? aiPlan.entry + '元' : '观望' }}</span>
+            </div>
+            <div class="ai-trade-plan-item">
+              <span class="label">止损价</span>
+              <span class="value" :class="{ 'value-warn': aiPlan.stop != null && aiPlan.entry != null && aiPlan.stop >= aiPlan.entry }">{{ aiPlan.stop != null ? aiPlan.stop + '元' : '--' }}</span>
+            </div>
+            <div class="ai-trade-plan-item">
+              <span class="label">目标价</span>
+              <span class="value">{{ aiPlan.target != null ? aiPlan.target + '元' : '--' }}</span>
+            </div>
+            <div class="ai-trade-plan-item">
+              <span class="label">盈亏比</span>
+              <span class="value" :class="{ 'value-good': aiPlan.rr != null && aiPlan.rr >= 2, 'value-warn': aiPlan.rr != null && aiPlan.rr < 1.5 }">{{ aiPlan.rr != null ? aiPlan.rr + ':1' : '--' }}</span>
+            </div>
+            <div class="ai-trade-plan-item">
+              <span class="label">仓位</span>
+              <span class="value">{{ aiPlan.position || '--' }}</span>
+            </div>
+          </div>
+        </div>
         <div v-if="aiJudgeError && !aiJudgeText" class="ai-error">{{ aiJudgeError }}</div>
         </template>
       </div>
@@ -105,6 +133,7 @@ import { getIndustryRankLabel } from '../../utils/industryRank.js'
 const props = defineProps({
   scoreResult: { type: Object, default: null },
   aiJudgeText: { type: String, default: '' },
+  aiPlan: { type: Object, default: null },
   aiJudgeLoading: { type: Boolean, default: false },
   aiJudgeError: { type: String, default: '' },
   aiJudgeEnabled: { type: Boolean, default: false },
@@ -176,6 +205,13 @@ function resonanceClass(label) {
   if (label.includes('空头')) return 'res-bear'
   return 'res-warn' // 逆势偏强/偏弱
 }
+
+const planDirClass = computed(() => {
+  const d = props.aiPlan?.direction || ''
+  if (d.includes('多')) return 'dir-bull'
+  if (d.includes('空')) return 'dir-bear'
+  return 'dir-neutral'
+})
 
 const renderedAIContent = computed(() => {
   const text = props.aiJudgeText
@@ -748,7 +784,7 @@ onMounted(() => {
 
 .ai-content {
   font-size: 13px;
-  line-height: 1.8;
+  line-height: 1.6;
   color: var(--text-primary);
 }
 
@@ -761,7 +797,6 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 700;
   color: var(--accent, #0071e3);
-  margin-top: 12px;
   margin-bottom: 4px;
 }
 .ai-content :deep(.ai-heading:first-child) {
@@ -786,6 +821,58 @@ onMounted(() => {
   background: rgba(255,255,255,0.03);
   border-radius: var(--radius-sm);
 }
+
+.ai-trade-plan {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 113, 227, 0.06);
+  border: 1px solid rgba(0, 113, 227, 0.2);
+  border-radius: var(--radius-sm);
+}
+.ai-trade-plan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.ai-trade-plan-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+.ai-trade-plan-dir {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+.ai-trade-plan-dir.dir-bull { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+.ai-trade-plan-dir.dir-bear { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+.ai-trade-plan-dir.dir-neutral { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+.ai-trade-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+.ai-trade-plan-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ai-trade-plan-item .label {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.ai-trade-plan-item .value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.3px;
+}
+.ai-trade-plan-item .value-good { color: #ef4444; }
+.ai-trade-plan-item .value-warn { color: #f59e0b; }
 
 @keyframes shimmer {
   0% { background-position: 200% 0; }

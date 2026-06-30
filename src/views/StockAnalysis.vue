@@ -189,6 +189,7 @@
             :key="selectedCode"
             :score-result="scoreResult"
             :ai-judge-text="aiJudgeText"
+            :ai-plan="aiPlan"
             :ai-judge-loading="aiJudgeLoading"
             :ai-judge-error="aiJudgeError"
             :ai-judge-enabled="aiJudgeEnabled"
@@ -305,6 +306,7 @@ const {
 
 // ==================== AI 判断 ====================
 const aiJudgeText = ref('')
+const aiPlan = ref(null)
 const aiJudgeLoading = ref(false)
 const aiJudgeError = ref('')
 const aiJudgeEnabled = ref(false)
@@ -330,6 +332,7 @@ function toggleAIJudge() {
   } else {
     // 关闭时清空
     aiJudgeText.value = ''
+    aiPlan.value = null
     aiJudgeError.value = ''
     if (aiAbortController) { aiAbortController.abort(); aiAbortController = null }
     aiJudgeLoading.value = false
@@ -414,28 +417,113 @@ function triggerAIJudge() {
     const atrValue = atrArr[len - 1] ?? null
     const atrPct = atrValue && price ? +(atrValue / price * 100).toFixed(2) : null
 
-    // 预计算候选价位：AI 无需自己算数学，只能从这些值中选择/引用
-    // 目的：彻底消除"突破低于现价的价位""止损过紧"等数学错误
+    // 预计算候选价位：基于真实技术结构（近期高低点+均线），而非纯ATR常量
+    // 目的：消除"盈亏比永远是2:1"的无信息量问题，反映个股真实风险收益结构
     const candidates = (() => {
       if (!price || !atrValue) return null
-      const stop1atr = +(price - atrValue).toFixed(2)       // 1×ATR 止损
+      // 近20日 swing point（局部极值：比左右2根K线都高/低），代表多空转折点
+      // Math.max/min 会取到单日毛刺，局部极值才是结构性支撑/阻力
+      const recent20 = kl.slice(-20)
+      const side = 2
+      const findSwing = (arr, isHigh) => {
+        if (arr.length < side * 2 + 1) return isHigh ? Math.max(...arr.map(k => k.high)) : Math.min(...arr.map(k => k.low))
+        for (let i = arr.length - 1 - side; i >= side; i--) {
+          const v = isHigh ? arr[i].high : arr[i].low
+          let ok = true
+          for (let j = 1; j <= side; j++) {
+            if (isHigh ? (v <= arr[i - j].high || v <= arr[i + j].high) : (v >= arr[i - j].low || v >= arr[i + j].low)) {
+              ok = false; break
+            }
+          }
+          if (ok) return v
+        }
+        return isHigh ? Math.max(...arr.map(k => k.high)) : Math.min(...arr.map(k => k.low))
+      }
+      const swingHigh20 = recent20.length ? +findSwing(recent20, true).toFixed(2) : null
+      const swingLow20 = recent20.length ? +findSwing(recent20, false).toFixed(2) : null
+      // 60日 swing point：单边趋势中更有意义的结构阻力/支撑
+      // 趋势行情中20日swing高点易被突破或紧贴现价，60日窗口提供更稳健的结构参考
+      const recent60 = kl.slice(-60)
+      const swingHigh60 = recent60.length ? +findSwing(recent60, true).toFixed(2) : null
+      const swingLow60 = recent60.length ? +findSwing(recent60, false).toFixed(2) : null
+
+      // 止损候选（支撑位）：优先用真实结构，ATR作兜底
+      const stop1atr = +(price - atrValue).toFixed(2)       // 1×ATR 止损（波动率兜底）
       const stop15atr = +(price - 1.5 * atrValue).toFixed(2) // 1.5×ATR 止损
       const stop2atr = +(price - 2 * atrValue).toFixed(2)    // 2×ATR 止损
+
+      // 目标候选（阻力位）：优先用真实结构，ATR作兜底
       const tgt2atr = +(price + 2 * atrValue).toFixed(2)     // 2×ATR 目标
       const tgt3atr = +(price + 3 * atrValue).toFixed(2)     // 3×ATR 目标
+
+      // 突破测量目标：单边趋势中前高易被突破，用等幅测量法计算目标价
+      // tgtMeasured = swingHigh20 + (swingHigh20 - swingLow20)，即突破后按前一波段幅度等距上推
+      const tgtMeasured = (swingHigh20 && swingLow20 && price > swingHigh20)
+        ? +(swingHigh20 + (swingHigh20 - swingLow20)).toFixed(2) : null
+
+      // 真实盈亏比（基于实际结构配对，非ATR常量）
+      // 配对1：结构止损(前低) + 结构目标(前高) —— 最真实的结构盈亏比（震荡行情适用）
+      const rrStruct = (swingHigh20 && swingLow20 && swingHigh20 > price && price > swingLow20)
+        ? +(((swingHigh20 - price) / (price - swingLow20))).toFixed(2) : null
+      // 配对2：均线止损(MA20) + 结构目标(前高)
+      const rrMa20High = (swingHigh20 && swingHigh20 > price && price > ma20 && ma20 > 0)
+        ? +(((swingHigh20 - price) / (price - ma20))).toFixed(2) : null
+      // 配对3：ATR止损(1×ATR) + 结构目标(前高) —— ATR风险+结构目标
+      const rrAtrHigh = (swingHigh20 && swingHigh20 > price)
+        ? +(((swingHigh20 - price) / atrValue)).toFixed(2) : null
+      // 配对4：MA20跟踪止损 + 3×ATR目标 —— 趋势行情主推，动态
+      // 值 = 3×ATR / (price - ma20)，价格离MA20越远跟踪止损越宽，盈亏比越低
+      // 保护：price-ma20 < 0.5×ATR时分母过小，盈亏比趋无穷，不可靠
+      const rrTrailing = (price > ma20 && ma20 > 0 && (price - ma20) >= atrValue * 0.5)
+        ? +(((tgt3atr - price) / (price - ma20))).toFixed(2) : null
+      // 配对5：突破测量盈亏比 —— 趋势中突破前高后的等幅目标，止损用1×ATR
+      const rrMeasured = (tgtMeasured && tgtMeasured > price)
+        ? +(((tgtMeasured - price) / atrValue)).toFixed(2) : null
+      // 配对6：60日结构盈亏比 —— 趋势中用60日swing高低点，比20日更稳健
+      const rrStruct60 = (swingHigh60 && swingLow60 && swingHigh60 > price && price > swingLow60)
+        ? +(((swingHigh60 - price) / (price - swingLow60))).toFixed(2) : null
+      // 配对7：移动止损动态化 —— 价格涨1×ATR后止损上移至MA20+1×ATR，锁定利润
+      // 新止损 = ma20 + atrValue，新入场价 = price + atrValue，目标不变
+      // 盈亏比 = (tgt3atr - price - atrValue) / (price - ma20)  分母中atrValue抵消
+      const stopTrailing2 = +(ma20 + atrValue).toFixed(2)
+      const entryTrailing2 = +(price + atrValue).toFixed(2)
+      const rrTrailing2 = (price > ma20 && ma20 > 0 && (price - ma20) >= atrValue * 0.5 && tgt3atr > entryTrailing2)
+        ? +(((tgt3atr - entryTrailing2) / (entryTrailing2 - stopTrailing2))).toFixed(2) : null
+
       return {
-        stop1atr, stop15atr, stop2atr,
-        tgt2atr, tgt3atr,
+        // ATR 候选（兜底）
+        stop1atr, stop15atr, stop2atr, tgt2atr, tgt3atr,
+        // 真实结构候选
+        swingHigh20, swingLow20, swingHigh60, swingLow60,
+        // 突破测量目标
+        tgtMeasured,
+        // 移动止损候选
+        stopTrailing2, entryTrailing2,
+        // 真实盈亏比
+        rrStruct, rrMa20High, rrAtrHigh, rrTrailing, rrMeasured, rrStruct60, rrTrailing2,
         ma5: +ma5.toFixed(2), ma20: +ma20.toFixed(2),
         ma60: ma60 ? +ma60.toFixed(2) : null,
         latestClose: +price.toFixed(2),
       }
     })()
 
+    // 量价配合：放量/缩量是判断突破有效性的核心信号
+    const vols = kl.map(k => k.volume || 0).filter(v => v > 0)
+    const vol20 = vols.length >= 20 ? vols.slice(-20).reduce((s, v) => s + v, 0) / 20 : (vols.length ? vols.reduce((s, v) => s + v, 0) / vols.length : 0)
+    const vol5 = vols.length >= 5 ? vols.slice(-5).reduce((s, v) => s + v, 0) / 5 : vol20
+    const volRatio5 = vol20 > 0 ? +(vol5 / vol20).toFixed(2) : null
+    const recent5Vols = vols.slice(-5)
+    const volTrend = recent5Vols.length >= 3
+      ? (recent5Vols[recent5Vols.length - 1] > recent5Vols[0] * 1.1 ? '递增' : recent5Vols[recent5Vols.length - 1] < recent5Vols[0] * 0.9 ? '递减' : '平稳')
+      : '平稳'
+    const latestVol = vols[vols.length - 1] || 0
+    const breakoutWithVol = vol20 > 0 ? +(latestVol / vol20).toFixed(2) : null
+
     return {
       stage, deviation20, deviation60, maAlign, maDeadCross, macdDirection, aboveMa5, aboveMa20, aboveMa60,
       ma5Price: +ma5.toFixed(2), ma20Price: +ma20.toFixed(2), ma60Price: ma60 ? +ma60.toFixed(2) : null,
       atrValue: atrValue ? +atrValue.toFixed(2) : null, atrPct,
+      volRatio5, volTrend, breakoutWithVol,
       candidates,
     }
   })()
@@ -472,15 +560,64 @@ function triggerAIJudge() {
     priceAction: { latestClose, change5d, change20d },
     trendContext,
     previousAdvice: aiJudgeText.value ? aiJudgeText.value.slice(-200) : null,
+    // 方向4：历史建议复查——读取上次建议的结构化交易计划，与当前价对比
+    lastAdviceReview: (() => {
+      if (!stock?.code) return null
+      try {
+        const raw = localStorage.getItem(`aiAdvice_${stock.code}`)
+        if (!raw) return null
+        const data = JSON.parse(raw)
+        const plan = data.plan
+        if (!plan || plan.entry == null) return null
+        const cur = latestClose
+        const days = Math.floor((Date.now() - data.ts) / 86400000)
+        const hitStop = plan.stop != null && cur <= plan.stop * 1.02
+        const hitTarget = plan.target != null && cur >= plan.target * 0.98
+        return {
+          direction: plan.direction,
+          entry: plan.entry,
+          stop: plan.stop,
+          target: plan.target,
+          rr: plan.rr,
+          advicePrice: data.price,
+          currentPrice: cur,
+          daysAgo: days,
+          hitStop,
+          hitTarget,
+          summary: hitStop ? `上次建议止损${plan.stop}元已触发` : hitTarget ? `上次建议目标${plan.target}元已达成` : `上次建议入场${plan.entry}元/止损${plan.stop}元/目标${plan.target}元，当前${cur}元（${days}天前）`,
+        }
+      } catch { return null }
+    })(),
   }
 
   aiJudgeText.value = ''
+  aiPlan.value = null
   aiJudgeError.value = ''
   aiJudgeLoading.value = true
 
   aiAbortController = fetchAIJudge(payload, {
     onText: (chunk) => { aiJudgeText.value += chunk },
-    onDone: () => { aiJudgeLoading.value = false },
+    onDone: () => {
+      // 从完整文本中提取结构化JSON交易计划，并从显示文本中剥离
+      const jsonMatch = aiJudgeText.value.match(/```json\s*(\{[^}]+\})\s*```/)
+      if (jsonMatch) {
+        try {
+          aiPlan.value = JSON.parse(jsonMatch[1])
+          // 存储历史建议供下次复查（方向4）
+          if (aiPlan.value && stock?.code) {
+            try {
+              localStorage.setItem(`aiAdvice_${stock.code}`, JSON.stringify({
+                plan: aiPlan.value,
+                ts: Date.now(),
+                price: latestClose,
+              }))
+            } catch { /* localStorage满或不可用 */ }
+          }
+        } catch { aiPlan.value = null }
+        aiJudgeText.value = aiJudgeText.value.replace(/```json\s*\{[^}]+\}\s*```/, '').trimEnd()
+      }
+      aiJudgeLoading.value = false
+    },
     onError: (msg) => {
       aiJudgeError.value = msg || 'AI 分析暂时不可用'
       aiJudgeLoading.value = false
@@ -569,6 +706,7 @@ function onSearchSelect(item) {
 function handleStockChange() {
   onStockChange(() => {
     aiJudgeText.value = ''
+    aiPlan.value = null
     aiJudgeError.value = ''
     aiJudgeEnabled.value = false
     aiJudgeLoading.value = false
